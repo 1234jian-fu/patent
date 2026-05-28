@@ -179,6 +179,15 @@ interface CnipaSearchResult {
   hint?: string;
 }
 
+function formatDateRange(startDate: string, endDate: string) {
+  if (!startDate && !endDate) return "未限定";
+  return `${startDate || "不限"} 至 ${endDate || "今"}`;
+}
+
+function isInvalidDateRange(startDate: string, endDate: string) {
+  return Boolean(startDate && endDate && startDate > endDate);
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const [assessment, setAssessment] = useState<NoveltyAssessment>(defaultAssessment);
@@ -347,6 +356,8 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [inventionDisclosure, setInventionDisclosure] = useState(
     "本方案面向长期部署的多模态传感器节点，基于异常事件强度动态调整采样频率，并在边缘计算节点中根据功耗预算约束更新融合权重，输出设备状态判定结果。",
   );
+  const [searchStartDate, setSearchStartDate] = useState("2018-01-01");
+  const [searchEndDate, setSearchEndDate] = useState("");
   const [patentUrls, setPatentUrls] = useState("");
   const [manualEvidence, setManualEvidence] = useState("");
   const [isAssessing, setIsAssessing] = useState(false);
@@ -357,6 +368,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [error, setError] = useState("");
 
   async function generateSearchBlocks() {
+    if (isInvalidDateRange(searchStartDate, searchEndDate)) {
+      setError("日期范围不合法：开始日期不能晚于结束日期。");
+      return;
+    }
+
     setIsGeneratingBlocks(true);
     setError("");
 
@@ -364,7 +380,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
       const response = await fetch("/api/patent/search-blocks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, inventionDisclosure }),
+        body: JSON.stringify({
+          title,
+          inventionDisclosure,
+          dateRange: formatDateRange(searchStartDate, searchEndDate),
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "检索词生成失败");
@@ -377,6 +397,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   }
 
   async function runCnipaSearch() {
+    if (isInvalidDateRange(searchStartDate, searchEndDate)) {
+      setError("日期范围不合法：开始日期不能晚于结束日期。");
+      return;
+    }
+
     setIsSearchingCnipa(true);
     setError("");
 
@@ -386,7 +411,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         const blockResponse = await fetch("/api/patent/search-blocks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, inventionDisclosure }),
+          body: JSON.stringify({
+            title,
+            inventionDisclosure,
+            dateRange: formatDateRange(searchStartDate, searchEndDate),
+          }),
         });
         const blockData = await blockResponse.json();
         if (!blockResponse.ok) throw new Error(blockData?.error || "检索词生成失败");
@@ -399,7 +428,10 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
       const response = await fetch("/api/patent/cnipa-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blocks }),
+        body: JSON.stringify({
+          blocks,
+          dateRange: formatDateRange(searchStartDate, searchEndDate),
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -425,6 +457,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isInvalidDateRange(searchStartDate, searchEndDate)) {
+      setError("日期范围不合法：开始日期不能晚于结束日期。");
+      return;
+    }
+
     setIsAssessing(true);
     setError("");
 
@@ -435,6 +472,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         body: JSON.stringify({
           title,
           inventionDisclosure,
+          dateRange: formatDateRange(searchStartDate, searchEndDate),
           patentUrls: patentUrls
             .split(/\r?\n/)
             .map((url) => url.trim())
@@ -479,9 +517,29 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             中国专利请求名称
             <input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
-          <label>
+          <label className="date-field">
             时间跨度
-            <input defaultValue="2018-01-01 至今" />
+            <div className="date-range-control">
+              <div className="date-input-cell">
+                <span>开始</span>
+                <input
+                  aria-label="检索开始日期"
+                  type="date"
+                  value={searchStartDate}
+                  onChange={(event) => setSearchStartDate(event.target.value)}
+                />
+              </div>
+              <div className="date-input-cell">
+                <span>结束</span>
+                <input
+                  aria-label="检索结束日期，留空表示至今"
+                  type="date"
+                  value={searchEndDate}
+                  onChange={(event) => setSearchEndDate(event.target.value)}
+                />
+              </div>
+            </div>
+            <small>{formatDateRange(searchStartDate, searchEndDate)}</small>
           </label>
           <label className="span-all">
             对比文件来源

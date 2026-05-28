@@ -583,8 +583,9 @@ app.get("/api/cnipa/status", async (_req, res) => {
 
 app.post("/api/patent/search-blocks", async (req, res) => {
   try {
-    const { title, inventionDisclosure } = req.body;
+    const { title, inventionDisclosure, dateRange } = req.body;
     const disclosure = String(inventionDisclosure || "").trim();
+    const searchDateRange = String(dateRange || "未限定").trim();
     if (!disclosure) {
       return res.status(400).json({ error: "Missing inventionDisclosure." });
     }
@@ -612,6 +613,7 @@ app.post("/api/patent/search-blocks", async (req, res) => {
 - avoidTerms: 不建议单独检索的泛词
 
 案件名称：${title || "未命名中国专利请求"}
+检索日期范围：${searchDateRange}
 
 技术方案：
 ${disclosure.slice(0, 8000)}`,
@@ -653,6 +655,7 @@ ${disclosure.slice(0, 8000)}`,
 app.post("/api/patent/cnipa-search", async (req, res) => {
   try {
     const status = await getCnipaSearchStatus();
+    const dateRange = String(req.body?.dateRange || "未限定").trim();
     const blocks = Array.isArray(req.body?.blocks)
       ? req.body.blocks.map((block: unknown) => String(block).trim()).filter(Boolean).slice(0, 8)
       : [];
@@ -695,12 +698,13 @@ app.post("/api/patent/cnipa-search", async (req, res) => {
     res.json({
       status,
       blocks,
+      dateRange,
       rounds,
       hits,
       evidenceText: hits
         .map((hit) => {
           const pub = hit.pub_number || hit.pubNumber || "未识别公开号";
-          return `【CNIPA】${pub} ${hit.title || ""}\n链接：${hit.link || ""}\n摘要：${hit.abstract || "该条无摘要字段"}`;
+          return `【CNIPA】${pub} ${hit.title || ""}\n检索日期范围：${dateRange}\n链接：${hit.link || ""}\n摘要：${hit.abstract || "该条无摘要字段"}`;
         })
         .join("\n\n"),
     });
@@ -788,7 +792,8 @@ ${userContent}`,
 
 app.post("/api/patent/novelty-assessment", async (req, res) => {
   try {
-    const { title, inventionDisclosure, patentUrls, manualEvidence } = req.body;
+    const { title, inventionDisclosure, patentUrls, manualEvidence, dateRange } = req.body;
+    const searchDateRange = String(dateRange || "未限定").trim();
     const urls = Array.isArray(patentUrls)
       ? patentUrls.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
       : [];
@@ -839,6 +844,7 @@ URL：${doc.url}
         {
           role: "user",
           content: `请完成中国专利创新性评估。要求判断要有证据，不要泛泛而谈。
+查新日期范围：${searchDateRange}
 
 硬性规则：
 - 不允许出现 CNXXXX、CNYYYY、对比文件1标题、[具体结构/方法]、[参数/步骤] 等占位符。
@@ -857,6 +863,7 @@ URL：${doc.url}
 - selfCheckRisks: 内部自检风险，关注逻辑闭环、公式/参数一致性、术语一致性、可实施性
 
 待申请主题：${title || "未命名中国专利请求"}
+查新日期范围：${searchDateRange}
 
 待申请技术方案：
 ${String(inventionDisclosure).slice(0, 12000)}
