@@ -63,6 +63,7 @@ const projects: PatentProject[] = [
 ];
 
 const skills = [
+  { name: "中国专利交底书", desc: "扫描项目、挖掘专利点、查新并生成 md/docx 交底书", icon: FileText },
   { name: "交底书解析", desc: "提取技术问题、方案、效果与实施例", icon: BookOpenText },
   { name: "创新性查新", desc: "生成检索式、IPC 建议与风险分", icon: Search },
   { name: "对比文件分析", desc: "Top 5 对比文件逐项特征映射", icon: GitCompareArrows },
@@ -77,6 +78,16 @@ const references = [
   { id: "US20240112991A1", title: "Sensor fusion for embedded devices", score: 68, hit: "模型更新机制相似" },
   { id: "EP4276132A1", title: "Adaptive sampling controller", score: 61, hit: "采样频率控制相近" },
   { id: "CN113558240A", title: "一种工业设备状态监测系统", score: 54, hit: "应用场景接近" },
+];
+
+const disclosurePipeline = [
+  "项目扫描",
+  "专利点挖掘",
+  "CNIPA 查新",
+  "交底书预览",
+  "mermaid 图示",
+  "md/docx 交付",
+  "自检与迭代",
 ];
 
 export default function App() {
@@ -196,7 +207,19 @@ function Dashboard({ onJump }: { onJump: (tab: AppTab) => void }) {
       <section className="content-card">
         <div className="section-title">
           <h3>AI Skills</h3>
-          <Badge>可扩展</Badge>
+          <Badge>已注入 1.8.7</Badge>
+        </div>
+        <div className="injected-skill">
+          <div>
+            <span className="eyebrow">Injected Skill</span>
+            <strong>中国专利交底书 Skill</strong>
+            <p>来自 handsomestWei/patent-disclosure-skill：覆盖专利点挖掘、国知局公布公告查新、脱敏交底书成稿、自检和迭代留档。</p>
+          </div>
+          <div className="pipeline-strip">
+            {disclosurePipeline.map((step) => (
+              <span key={step}>{step}</span>
+            ))}
+          </div>
         </div>
         <div className="skill-grid">
           {skills.map((skill) => {
@@ -265,7 +288,12 @@ function NoveltySearch({ onJump }: { onJump: (tab: AppTab) => void }) {
       </section>
 
       <aside className="insight-panel">
-        <h3>交底书解析 Skill</h3>
+        <h3>中国专利交底书 Skill</h3>
+        <div className="skill-source">
+          <span>优先数据源</span>
+          <strong>国家知识产权局 · 中国专利公布公告</strong>
+          <p>查询阶段按 2-8 个语义块拆分检索，合并 pub_number 后再生成对比结论。</p>
+        </div>
         <Insight title="核心技术问题" text="现有融合节点持续采集导致功耗升高，难以满足长期部署场景。" />
         <Insight title="关键技术特征" text="事件触发采样、分层特征融合、边缘侧动态阈值更新。" />
         <Insight title="建议分类号" text="G06F 18/25、G01D 21/02、H04W 52/02" />
@@ -356,10 +384,12 @@ function DraftWorkbench() {
 
       <aside className="assistant-panel">
         <h3>AI Skills 面板</h3>
+        <SkillAction icon={BookOpenText} title="按交底书模板生成章节" />
         <SkillAction icon={Scale} title="生成从属权利要求" />
         <SkillAction icon={ShieldCheck} title="保护范围风险审查" />
         <SkillAction icon={MessageSquareText} title="术语一致性检查" />
         <SkillAction icon={BrainCircuit} title="说明书反向扩写" />
+        <SkillAction icon={GitCompareArrows} title="补充现有技术区别论述" />
         <div className="risk-note">
           <AlertTriangle size={18} />
           “异常事件强度”需要在说明书中给出计算方式或判定规则。
@@ -407,6 +437,11 @@ function ExportReview() {
 
       <aside className="insight-panel">
         <h3>导出</h3>
+        <div className="delivery-card">
+          <strong>交底书交付规则</strong>
+          <span>{`{案件名}_{YYYYMMDDHHmmss}.md + .docx`}</span>
+          <p>保留 mermaid 系统框图/流程图源文本，并在导出时渲染为图片写入 Word。</p>
+        </div>
         <button className="primary-button full">
           <Download size={16} /> 导出 CNIPA ZIP
         </button>

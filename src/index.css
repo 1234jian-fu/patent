@@ -392,6 +392,53 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.injected-skill {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid #b8c9e5;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(27, 54, 93, 0.08), transparent 52%),
+    #f7faff;
+}
+
+.injected-skill strong,
+.injected-skill p {
+  display: block;
+  margin: 0;
+}
+
+.injected-skill strong {
+  margin-top: 4px;
+  color: var(--primary);
+  font-size: 17px;
+}
+
+.injected-skill p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.pipeline-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.pipeline-strip span {
+  padding: 6px 9px;
+  border: 1px solid #c8d7ed;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .skill-card {
   padding: 14px;
   border: 1px solid var(--line-soft);
@@ -521,6 +568,39 @@ textarea {
 
 .insight-panel h3 {
   margin-top: 0;
+}
+
+.skill-source,
+.delivery-card {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.skill-source span,
+.delivery-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.skill-source strong,
+.delivery-card strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.skill-source p,
+.delivery-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .insight {
