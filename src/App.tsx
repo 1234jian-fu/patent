@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -702,6 +702,24 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   const activeDraft = draft || defaultDraft;
   const markdown = activeDraft.markdown || buildFallbackMarkdown(activeDraft, assessment);
   const [exportError, setExportError] = useState("");
+  const [docxStatus, setDocxStatus] = useState("检测中");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/docx/status")
+      .then((response) => response.json())
+      .then((data) => {
+        if (cancelled) return;
+        setDocxStatus(data?.minimax?.ready ? `MiniMax 可用 · .NET ${data.minimax.dotnetVersion}` : "MiniMax 未就绪 · 自动降级 Node DOCX");
+      })
+      .catch(() => {
+        if (!cancelled) setDocxStatus("DOCX 状态检测失败");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleDownloadMarkdown() {
     downloadText(`${sanitizeFilename(activeDraft.title)}_${getTimestamp()}.md`, markdown);
@@ -718,6 +736,29 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data?.error || "DOCX 导出失败");
+      }
+      const blob = await response.blob();
+      downloadBlob(`${sanitizeFilename(activeDraft.title)}_${getTimestamp()}.docx`, blob);
+    } catch (nextError) {
+      setExportError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  }
+
+  async function handleDownloadMiniMaxDocx() {
+    setExportError("");
+    try {
+      const response = await fetch("/api/patent/export-docx-minimax", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draft: activeDraft, fallback: true }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "MiniMax DOCX 导出失败");
+      }
+      const provider = response.headers.get("X-Docx-Provider");
+      if (provider === "node-docx") {
+        setExportError("MiniMax 严格导出未就绪，已自动降级为 Node DOCX。安装 .NET SDK 后会切回 MiniMax。");
       }
       const blob = await response.blob();
       downloadBlob(`${sanitizeFilename(activeDraft.title)}_${getTimestamp()}.docx`, blob);
@@ -768,12 +809,20 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
           <span>{`{案件名}_{YYYYMMDDHHmmss}.md + .docx`}</span>
           <p>保留 mermaid 系统框图/流程图源文本，并在导出时渲染为图片写入 Word。</p>
         </div>
+        <div className="delivery-card">
+          <strong>MiniMax DOCX 管线</strong>
+          <span>{docxStatus}</span>
+          <p>服务器安装 .NET SDK 后，严格导出会走 minimax-docx OpenXML 创建、merge-runs 和 XSD 校验。</p>
+        </div>
         {exportError && <div className="form-error">{exportError}</div>}
         <button className="primary-button full" onClick={handleDownloadMarkdown}>
           <Download size={16} /> 下载交底书 MD
         </button>
+        <button className="ghost-button full" onClick={handleDownloadMiniMaxDocx}>
+          <FileText size={16} /> MiniMax 严格 DOCX
+        </button>
         <button className="ghost-button full" onClick={handleDownloadDocx}>
-          <FileText size={16} /> 下载 DOCX
+          <FileText size={16} /> Node 兼容 DOCX
         </button>
         <button className="ghost-button full">
           <FileCheck2 size={16} /> DOCX/PDF 待接入

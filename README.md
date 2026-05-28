@@ -8,7 +8,7 @@
 - DeepSeek 驱动的创新性风险评估
 - Top 对比文件、特征 1:1 对比和可主张创新点输出
 - 集成 `handsomestWei/patent-disclosure-skill` 的专利点挖掘、交底书大纲、自检风险和交付命名规则
-- 集成 MiniMax `minimax-docx` 工作流入口，并提供交底书 `.docx` 下载能力
+- 集成 MiniMax `minimax-docx` 严格 DOCX 工作流入口；服务器安装 `.NET SDK` 后走 OpenXML 创建、merge-runs 与 XSD 校验，未安装时自动降级为 Node DOCX
 - 五页一致工作流：工作台、创新性查询、查新结果、智能撰写、格式导出
 
 ## 本地运行
@@ -30,3 +30,9 @@
 npm run lint
 npm run build
 ```
+
+## DOCX 导出
+
+- `GET /api/docx/status`：检测 MiniMax `minimax-docx` 与 `.NET SDK` 状态。
+- `POST /api/patent/export-docx-minimax`：优先使用 MiniMax OpenXML 管线导出；未安装 `.NET SDK` 时自动降级为 Node DOCX。
+- `POST /api/patent/export-docx`：直接使用 Node DOCX 兼容导出。

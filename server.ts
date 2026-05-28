@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { execFile } from "child_process";
 import {
   Document,
   HeadingLevel,
@@ -7,7 +8,10 @@ import {
   TextRun,
 } from "docx";
 import express from "express";
+import fs from "fs/promises";
+import os from "os";
 import path from "path";
+import { promisify } from "util";
 import { fileURLToPath } from "url";
 
 dotenv.config({ path: ".env.local" });
@@ -20,6 +24,17 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+const execFileAsync = promisify(execFile);
+const MINIMAX_DOCX_DIR =
+  process.env.MINIMAX_DOCX_DIR || path.join(os.homedir(), ".agents", "skills", "minimax-docx");
+const MINIMAX_DOCX_PROJECT = path.join(
+  MINIMAX_DOCX_DIR,
+  "scripts",
+  "dotnet",
+  "MiniMaxAIDocx.Cli",
+  "MiniMaxAIDocx.Cli.csproj",
+);
+const MINIMAX_DOCX_XSD = path.join(MINIMAX_DOCX_DIR, "assets", "xsd", "wml-subset.xsd");
 
 type ChatRole = "system" | "user" | "assistant";
 
@@ -100,8 +115,170 @@ function createDocxParagraphs(draft: DisclosureDraftRequest) {
   return paragraphs;
 }
 
+async function createNodeDocxBuffer(draft: DisclosureDraftRequest) {
+  const doc = new Document({
+    creator: "PatentDraft",
+    title: draft.title || "技术交底书",
+    description: "PatentDraft generated patent disclosure document",
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: {
+              top: 1440,
+              right: 1440,
+              bottom: 1440,
+              left: 1440,
+            },
+          },
+        },
+        children: createDocxParagraphs(draft),
+      },
+    ],
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: "Microsoft YaHei",
+            size: 21,
+          },
+          paragraph: {
+            spacing: { line: 360 },
+          },
+        },
+      },
+    },
+  });
+
+  return Packer.toBuffer(doc);
+}
+
+function sendDocx(res: express.Response, draft: DisclosureDraftRequest, buffer: Buffer) {
+  const filename = encodeURIComponent(`${sanitizeFilename(draft.title || "技术交底书")}.docx`);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+  res.send(buffer);
+}
+
 function sanitizeFilename(filename: string) {
   return filename.replace(/[\\/:*?"<>|\r\n]/g, "").trim().slice(0, 70) || "PatentDraft";
+}
+
+async function commandExists(command: string) {
+  try {
+    await execFileAsync(command, ["--version"], { timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getMiniMaxDocxStatus() {
+  const [dotnetReady, projectExists] = await Promise.all([
+    commandExists("dotnet"),
+    fs
+      .access(MINIMAX_DOCX_PROJECT)
+      .then(() => true)
+      .catch(() => false),
+  ]);
+
+  let dotnetVersion = "";
+  if (dotnetReady) {
+    try {
+      const { stdout } = await execFileAsync("dotnet", ["--version"], { timeout: 10_000 });
+      dotnetVersion = stdout.trim();
+    } catch {
+      dotnetVersion = "";
+    }
+  }
+
+  return {
+    ready: dotnetReady && projectExists,
+    dotnetReady,
+    dotnetVersion,
+    skillPath: MINIMAX_DOCX_DIR,
+    projectPath: MINIMAX_DOCX_PROJECT,
+    projectExists,
+  };
+}
+
+function buildMiniMaxContentJson(draft: DisclosureDraftRequest) {
+  return [
+    { type: "heading", text: "注意事项", level: 1 },
+    { type: "paragraph", text: "（1）交底书应使代理人能看懂，尤其是背景技术和详细技术方案应完整、清楚。" },
+    { type: "paragraph", text: "（2）技术公开程度应以本领域普通技术人员能够实施为准。" },
+    { type: "heading", text: "权利要求书草稿", level: 1 },
+    ...(draft.claims || []).map((claim) => ({ type: "paragraph", text: claim })),
+    { type: "heading", text: "说明书摘要", level: 1 },
+    { type: "paragraph", text: draft.abstractText || "" },
+    ...(draft.descriptionSections || []).flatMap((section) => [
+      { type: "heading", text: section.heading, level: 1 },
+      { type: "paragraph", text: section.content },
+    ]),
+    { type: "heading", text: "系统框图 Mermaid 源码", level: 1 },
+    { type: "paragraph", text: draft.mermaidSystemDiagram || "需补充系统框图。" },
+    { type: "heading", text: "流程图 Mermaid 源码", level: 1 },
+    { type: "paragraph", text: draft.mermaidFlow || "需补充流程图。" },
+  ];
+}
+
+async function runMiniMaxDocxExport(draft: DisclosureDraftRequest) {
+  const status = await getMiniMaxDocxStatus();
+  if (!status.ready) {
+    throw new Error(
+      status.dotnetReady
+        ? "minimax-docx project is not available on this server."
+        : ".NET SDK is not installed or dotnet is not available in PATH.",
+    );
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "patentdraft-minimax-"));
+  const contentPath = path.join(tempDir, "content.json");
+  const outputPath = path.join(tempDir, `${sanitizeFilename(draft.title || "技术交底书")}.docx`);
+  await fs.writeFile(contentPath, JSON.stringify(buildMiniMaxContentJson(draft), null, 2), "utf8");
+
+  await execFileAsync(
+    "dotnet",
+    [
+      "run",
+      "--project",
+      MINIMAX_DOCX_PROJECT,
+      "--",
+      "create",
+      "--type",
+      "report",
+      "--page-size",
+      "a4",
+      "--margins",
+      "standard",
+      "--title",
+      draft.title || "技术交底书",
+      "--author",
+      "PatentDraft",
+      "--toc",
+      "--content-json",
+      contentPath,
+      "--output",
+      outputPath,
+    ],
+    { timeout: 120_000, cwd: MINIMAX_DOCX_DIR, windowsHide: true },
+  );
+
+  await execFileAsync("dotnet", ["run", "--project", MINIMAX_DOCX_PROJECT, "--", "merge-runs", "--input", outputPath], {
+    timeout: 120_000,
+    cwd: MINIMAX_DOCX_DIR,
+    windowsHide: true,
+  });
+
+  await execFileAsync(
+    "dotnet",
+    ["run", "--project", MINIMAX_DOCX_PROJECT, "--", "validate", "--input", outputPath, "--xsd", MINIMAX_DOCX_XSD],
+    { timeout: 120_000, cwd: MINIMAX_DOCX_DIR, windowsHide: true },
+  );
+
+  const buffer = await fs.readFile(outputPath);
+  await fs.rm(tempDir, { recursive: true, force: true });
+  return buffer;
 }
 
 function validateDraftDomain(draft: Record<string, unknown>, sourceText: string) {
@@ -234,6 +411,23 @@ app.get("/api/ai/status", (_req, res) => {
     model: DEEPSEEK_MODEL,
     baseUrl: DEEPSEEK_BASE_URL,
   });
+});
+
+app.get("/api/docx/status", async (_req, res) => {
+  try {
+    const minimax = await getMiniMaxDocxStatus();
+    res.json({
+      minimax,
+      fallback: {
+        provider: "node-docx",
+        ready: true,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 app.post("/api/deepseek/chat", async (req, res) => {
@@ -499,46 +693,31 @@ ${JSON.stringify(draft || {}, null, 2)}`,
 app.post("/api/patent/export-docx", async (req, res) => {
   try {
     const draft: DisclosureDraftRequest = req.body?.draft || {};
-    const doc = new Document({
-      creator: "PatentDraft",
-      title: draft.title || "技术交底书",
-      description: "PatentDraft generated patent disclosure document",
-      sections: [
-        {
-          properties: {
-            page: {
-              margin: {
-                top: 1440,
-                right: 1440,
-                bottom: 1440,
-                left: 1440,
-              },
-            },
-          },
-          children: createDocxParagraphs(draft),
-        },
-      ],
-      styles: {
-        default: {
-          document: {
-            run: {
-              font: "Microsoft YaHei",
-              size: 21,
-            },
-            paragraph: {
-              spacing: { line: 360 },
-            },
-          },
-        },
-      },
-    });
-
-    const buffer = await Packer.toBuffer(doc);
-    const filename = encodeURIComponent(`${sanitizeFilename(draft.title || "技术交底书")}.docx`);
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
-    res.send(buffer);
+    res.setHeader("X-Docx-Provider", "node-docx");
+    sendDocx(res, draft, await createNodeDocxBuffer(draft));
   } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/export-docx-minimax", async (req, res) => {
+  const draft: DisclosureDraftRequest = req.body?.draft || {};
+  const allowFallback = req.body?.fallback !== false;
+
+  try {
+    const buffer = await runMiniMaxDocxExport(draft);
+    res.setHeader("X-Docx-Provider", "minimax-docx");
+    sendDocx(res, draft, buffer);
+  } catch (error) {
+    if (allowFallback) {
+      res.setHeader("X-Docx-Provider", "node-docx");
+      res.setHeader("X-Docx-Fallback-Reason", encodeURIComponent(error instanceof Error ? error.message : String(error)));
+      sendDocx(res, draft, await createNodeDocxBuffer(draft));
+      return;
+    }
+
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),
     });
