@@ -1,6 +1,6 @@
 {
   "name": "专利起草专家",
-  "description": "专业级AI专利查新检索与智能撰写工作台，自动提取发明特征、多维对比对比文件、智力撰写权利要求与说明书，辅助格式校验与批量导出。",
+  "description": "专业级 AI 专利查新检索与智能撰写工作台，支持中国专利对比文件抓取、DeepSeek 创新性评估、权利要求建议、交底书大纲和格式导出。",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_AI_API"]
 }

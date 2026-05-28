@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -26,6 +26,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import type { AppTab, PatentProject } from "./types";
+import type { NoveltyAssessment } from "./types";
 
 const navItems: Array<{ id: AppTab; label: string; icon: typeof LayoutDashboard }> = [
   { id: "dashboard", label: "工作台", icon: LayoutDashboard },
@@ -80,6 +81,49 @@ const references = [
   { id: "CN113558240A", title: "一种工业设备状态监测系统", score: 54, hit: "应用场景接近" },
 ];
 
+const defaultAssessment: NoveltyAssessment = {
+  riskScore: 42,
+  conclusion: "中低风险，可进入权利要求设计。主要差异点集中在事件触发采样与融合权重联动更新的组合关系。",
+  noveltyPoints: [
+    "根据异常事件强度动态调整传感器采样频率，而非固定周期采样。",
+    "融合权重由边缘节点本地更新，降低云端依赖和通信开销。",
+    "将功耗预算作为融合模型约束条件写入控制流程。",
+  ],
+  featureComparison: [
+    {
+      feature: "事件触发采样",
+      evidence: "对比文件多公开固定周期采集或单阈值触发。",
+      noveltyJudgement: "可作为独权中的触发条件与采样频率调整关系。",
+    },
+    {
+      feature: "功耗预算约束融合权重",
+      evidence: "现有方案通常把功耗管理和融合模型分开描述。",
+      noveltyJudgement: "建议写成算法步骤之间的耦合关系。",
+    },
+  ],
+  references: references.map((ref) => ({
+    publicationNumber: ref.id,
+    title: ref.title,
+    source: ref.id.startsWith("CN") ? "CNIPA" : ref.id.startsWith("US") ? "USPTO" : "EPO",
+    relevanceScore: ref.score,
+    keyDisclosure: ref.hit,
+  })),
+  claimSuggestions: [
+    "独权聚焦“异常事件强度-采样频率调整系数-融合权重更新”的闭环。",
+    "从权补充环境变化率、历史误报率、功耗预算阈值的计算方式。",
+    "说明书中补齐边缘节点本地更新的触发条件和参数范围。",
+  ],
+  crawlerEvidence: [],
+  disclosureOutline: {
+    background: "长期部署传感器节点的采集功耗与边缘处理约束。",
+    technicalProblem: "如何在保证异常检测准确性的同时降低持续采样功耗。",
+    solution: "事件触发采样、边缘侧融合权重更新、功耗预算约束联动。",
+    beneficialEffects: "降低通信和采集能耗，提高部署稳定性。",
+    protectedPoints: "异常强度与采样频率、功耗预算与融合权重之间的耦合控制。",
+  },
+  selfCheckRisks: ["异常事件强度需定义计算方式。", "功耗预算阈值需要给出参数范围或示例。"],
+};
+
 const disclosurePipeline = [
   "项目扫描",
   "专利点挖掘",
@@ -92,6 +136,7 @@ const disclosurePipeline = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
+  const [assessment, setAssessment] = useState<NoveltyAssessment>(defaultAssessment);
   const activeTitle = navItems.find((item) => item.id === activeTab)?.label ?? "工作台";
 
   return (
@@ -146,8 +191,15 @@ export default function App() {
         </header>
 
         {activeTab === "dashboard" && <Dashboard onJump={setActiveTab} />}
-        {activeTab === "search" && <NoveltySearch onJump={setActiveTab} />}
-        {activeTab === "result" && <SearchResult onJump={setActiveTab} />}
+        {activeTab === "search" && (
+          <NoveltySearch
+            onAssessment={(nextAssessment) => {
+              setAssessment(nextAssessment);
+              setActiveTab("result");
+            }}
+          />
+        )}
+        {activeTab === "result" && <SearchResult assessment={assessment} onJump={setActiveTab} />}
         {activeTab === "draft" && <DraftWorkbench />}
         {activeTab === "export" && <ExportReview />}
       </main>
@@ -238,12 +290,54 @@ function Dashboard({ onJump }: { onJump: (tab: AppTab) => void }) {
   );
 }
 
-function NoveltySearch({ onJump }: { onJump: (tab: AppTab) => void }) {
+function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAssessment) => void }) {
+  const [title, setTitle] = useState("多模态传感器的低功耗融合方法");
+  const [inventionDisclosure, setInventionDisclosure] = useState(
+    "本方案面向长期部署的多模态传感器节点，基于异常事件强度动态调整采样频率，并在边缘计算节点中根据功耗预算约束更新融合权重，输出设备状态判定结果。",
+  );
+  const [patentUrls, setPatentUrls] = useState("");
+  const [manualEvidence, setManualEvidence] = useState("");
+  const [isAssessing, setIsAssessing] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsAssessing(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/patent/novelty-assessment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          inventionDisclosure,
+          patentUrls: patentUrls
+            .split(/\r?\n/)
+            .map((url) => url.trim())
+            .filter(Boolean),
+          manualEvidence,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || "创新性评估失败");
+      }
+
+      onAssessment(data);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setIsAssessing(false);
+    }
+  }
+
   return (
-    <div className="two-column">
+    <form className="two-column" onSubmit={handleSubmit}>
       <section className="content-card">
         <div className="stepper">
-          {["上传交底书", "提取特征", "配置检索", "生成报告"].map((step, index) => (
+          {["输入请求", "抓取对比文件", "证据比对", "创新性输出"].map((step, index) => (
             <div className={index === 0 ? "step active" : "step"} key={step}>
               <CircleDot size={16} />
               {step}
@@ -253,63 +347,85 @@ function NoveltySearch({ onJump }: { onJump: (tab: AppTab) => void }) {
 
         <div className="upload-zone">
           <UploadCloud size={42} />
-          <strong>上传技术交底书</strong>
-          <p>支持 .docx、.pdf、图片扫描件，系统将解析技术问题、关键结构和技术效果。</p>
-          <button className="primary-button">选择文件</button>
+          <strong>中国专利请求与对比文件证据</strong>
+          <p>输入待申请技术方案，并粘贴中国专利公布公告、Google Patents、EPO、WIPO 等对比文件链接，系统抓取正文后输出创新性判断。</p>
         </div>
 
         <div className="form-grid">
           <label>
-            技术主题
-            <input defaultValue="多模态传感器的低功耗融合方法" />
+            中国专利请求名称
+            <input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label>
             时间跨度
             <input defaultValue="2018-01-01 至今" />
           </label>
           <label className="span-all">
-            检索数据库
+            对比文件来源
             <div className="chip-row">
-              <span>CNIPA</span>
-              <span>USPTO</span>
+              <span>CNIPA 中国专利公布公告</span>
+              <span>Google Patents</span>
               <span>EPO</span>
               <span>WIPO</span>
             </div>
           </label>
           <label className="span-all">
-            技术关键词
-            <textarea defaultValue="多模态传感器；低功耗；数据融合；边缘计算；自适应采样" />
+            待申请技术方案
+            <textarea value={inventionDisclosure} onChange={(event) => setInventionDisclosure(event.target.value)} />
+          </label>
+          <label className="span-all">
+            对比文件 URL，每行一个
+            <textarea
+              placeholder="例如：https://patents.google.com/patent/CNXXXXXXXXA/zh"
+              value={patentUrls}
+              onChange={(event) => setPatentUrls(event.target.value)}
+            />
+          </label>
+          <label className="span-all">
+            人工补充证据或检索摘录
+            <textarea
+              placeholder="可粘贴国知局检索结果、摘要、权利要求片段或导师给出的现有技术材料。"
+              value={manualEvidence}
+              onChange={(event) => setManualEvidence(event.target.value)}
+            />
           </label>
         </div>
 
-        <button className="primary-button full" onClick={() => onJump("result")}>
-          开始查新评估 <Sparkles size={16} />
+        {error && <div className="form-error">{error}</div>}
+
+        <button className="primary-button full" disabled={isAssessing} type="submit">
+          {isAssessing ? "正在抓取并评估..." : "生成创新性评估"} <Sparkles size={16} />
         </button>
       </section>
 
       <aside className="insight-panel">
-        <h3>中国专利交底书 Skill</h3>
+        <h3>中国专利写作 Skill</h3>
         <div className="skill-source">
-          <span>优先数据源</span>
-          <strong>国家知识产权局 · 中国专利公布公告</strong>
-          <p>查询阶段按 2-8 个语义块拆分检索，合并 pub_number 后再生成对比结论。</p>
+          <span>证据优先级</span>
+          <strong>先证据，再结论，再撰写</strong>
+          <p>对比文件正文会作为证据材料传给 DeepSeek，创新点必须对应到具体差异特征。</p>
         </div>
         <Insight title="核心技术问题" text="现有融合节点持续采集导致功耗升高，难以满足长期部署场景。" />
         <Insight title="关键技术特征" text="事件触发采样、分层特征融合、边缘侧动态阈值更新。" />
-        <Insight title="建议分类号" text="G06F 18/25、G01D 21/02、H04W 52/02" />
+        <Insight title="输出内容" text="风险分、创新点、特征对比表、Top 对比文件、权利要求补强建议。" />
       </aside>
-    </div>
+    </form>
   );
 }
 
-function SearchResult({ onJump }: { onJump: (tab: AppTab) => void }) {
+function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; onJump: (tab: AppTab) => void }) {
+  const score = Math.max(0, Math.min(100, Number(assessment.riskScore) || 0));
+  const riskTone = score >= 70 ? "danger" : score >= 45 ? "warn" : "ok";
+
   return (
     <div className="result-layout">
       <section className="score-card">
         <span className="eyebrow">Novelty Risk</span>
-        <div className="score-ring">42</div>
-        <h2>中低风险，可进入权利要求设计</h2>
-        <p>主要差异点集中在“事件触发采样与融合权重联动更新”的组合关系。</p>
+        <div className="score-ring" style={{ "--score": `${score}%` } as CSSProperties}>
+          {score}
+        </div>
+        <h2>{score >= 70 ? "创新性风险较高，需重构差异特征" : score >= 45 ? "中等风险，需补强技术效果" : "风险可控，可进入撰写"}</h2>
+        <p>{assessment.conclusion}</p>
         <button className="primary-button" onClick={() => onJump("draft")}>
           进入智能撰写 <ArrowRight size={16} />
         </button>
@@ -317,39 +433,132 @@ function SearchResult({ onJump }: { onJump: (tab: AppTab) => void }) {
 
       <section className="content-card">
         <div className="section-title">
-          <h3>核心差异点</h3>
-          <Badge tone="ok">3 项可主张</Badge>
+          <h3>有证据支撑的创新点</h3>
+          <Badge tone={riskTone}>{assessment.noveltyPoints.length} 项</Badge>
         </div>
         <div className="novelty-list">
-          <Insight title="差异点 01" text="根据异常事件强度动态调整传感器采样频率，而非固定周期采样。" />
-          <Insight title="差异点 02" text="融合权重由边缘节点本地更新，降低云端依赖和通信开销。" />
-          <Insight title="差异点 03" text="将功耗预算作为融合模型约束条件写入控制流程。" />
+          {assessment.noveltyPoints.map((point, index) => (
+            <div key={point}>
+              <Insight title={`差异点 ${String(index + 1).padStart(2, "0")}`} text={point} />
+            </div>
+          ))}
         </div>
       </section>
 
       <section className="content-card wide">
         <div className="section-title">
-          <h3>Top 5 对比文件</h3>
+          <h3>Top 对比文件</h3>
           <button className="ghost-button">
             <Filter size={16} /> 筛选
           </button>
         </div>
         <div className="reference-table">
-          {references.map((ref) => (
-            <div className="reference-row" key={ref.id}>
-              <strong>{ref.id}</strong>
+          {assessment.references.map((ref) => (
+            <div className="reference-row" key={`${ref.publicationNumber}-${ref.title}`}>
+              <strong>{ref.publicationNumber || ref.source}</strong>
               <span>{ref.title}</span>
               <div className="bar">
-                <i style={{ width: `${ref.score}%` }} />
+                <i style={{ width: `${Math.max(0, Math.min(100, ref.relevanceScore || 0))}%` }} />
               </div>
-              <em>{ref.hit}</em>
+              <em>{ref.keyDisclosure}</em>
             </div>
           ))}
         </div>
       </section>
+
+      <section className="content-card wide">
+        <div className="section-title">
+          <h3>特征 1:1 对比</h3>
+          <Badge tone={riskTone}>证据链</Badge>
+        </div>
+        <div className="feature-table">
+          {assessment.featureComparison.map((item) => (
+            <div className="feature-row" key={item.feature}>
+              <strong>{item.feature}</strong>
+              <span>{item.evidence}</span>
+              <em>{item.noveltyJudgement}</em>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="content-card wide">
+        <div className="section-title">
+          <h3>权利要求补强建议</h3>
+          <Badge>写作入口</Badge>
+        </div>
+        <div className="suggestion-list">
+          {assessment.claimSuggestions.map((suggestion) => (
+            <div className="suggestion-item" key={suggestion}>
+              <Scale size={16} />
+              <span>{suggestion}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {assessment.disclosureOutline && (
+        <section className="content-card wide">
+          <div className="section-title">
+            <h3>交底书预览大纲</h3>
+            <Badge>Skill Step 6-7</Badge>
+          </div>
+          <div className="outline-grid">
+            {Object.entries(assessment.disclosureOutline).map(([key, value]) => (
+              <div className="outline-card" key={key}>
+                <strong>{outlineLabels[key] || key}</strong>
+                <p>{Array.isArray(value) ? value.join("；") : value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {assessment.selfCheckRisks && assessment.selfCheckRisks.length > 0 && (
+        <section className="content-card wide">
+          <div className="section-title">
+            <h3>内部自检风险</h3>
+            <Badge tone="warn">不写入正文</Badge>
+          </div>
+          <div className="suggestion-list">
+            {assessment.selfCheckRisks.map((risk) => (
+              <div className="suggestion-item" key={risk}>
+                <AlertTriangle size={16} />
+                <span>{risk}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {assessment.crawlerEvidence.length > 0 && (
+        <section className="content-card wide">
+          <div className="section-title">
+            <h3>网页抓取证据</h3>
+            <Badge>{assessment.crawlerEvidence.length} 个来源</Badge>
+          </div>
+          <div className="evidence-grid">
+            {assessment.crawlerEvidence.map((doc) => (
+              <div className="evidence-card" key={doc.url}>
+                <strong>{doc.title}</strong>
+                <span>{doc.source}</span>
+                <p>{doc.excerpt.slice(0, 180)}...</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
+
+const outlineLabels: Record<string, string> = {
+  background: "1.1 现有技术背景",
+  technicalProblem: "二、技术问题",
+  solution: "三、技术方案",
+  beneficialEffects: "四、有益效果",
+  protectedPoints: "五、技术关键点和欲保护点",
+};
 
 function DraftWorkbench() {
   return (

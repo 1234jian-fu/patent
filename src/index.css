@@ -42,6 +42,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
@@ -542,6 +547,17 @@ textarea {
   resize: vertical;
 }
 
+.form-error {
+  margin: -4px 0 14px;
+  padding: 12px;
+  border: 1px solid #f2b8b5;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .span-all {
   grid-column: 1 / -1;
 }
@@ -652,7 +668,7 @@ textarea {
   border-radius: 50%;
   background:
     radial-gradient(circle at center, #fff 55%, transparent 56%),
-    conic-gradient(var(--warn) 0 42%, #e9eef5 42% 100%);
+    conic-gradient(var(--warn) 0 var(--score, 42%), #e9eef5 var(--score, 42%) 100%);
   color: var(--primary);
   font-size: 44px;
   font-weight: 800;
@@ -702,6 +718,90 @@ textarea {
   height: 100%;
   background: var(--primary);
   border-radius: inherit;
+}
+
+.feature-table {
+  display: grid;
+  gap: 8px;
+}
+
+.feature-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.feature-row span,
+.feature-row em {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.55;
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 8px;
+}
+
+.suggestion-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.suggestion-item svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--primary);
+}
+
+.evidence-grid,
+.outline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.evidence-card,
+.outline-card {
+  padding: 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.evidence-card strong,
+.evidence-card span,
+.evidence-card p,
+.outline-card strong,
+.outline-card p {
+  display: block;
+  margin: 0;
+}
+
+.evidence-card span {
+  margin-top: 4px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.evidence-card p,
+.outline-card p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .workbench {
@@ -903,7 +1003,10 @@ textarea {
   .form-grid,
   .skill-grid,
   .reference-row,
-  .project-row {
+  .project-row,
+  .feature-row,
+  .evidence-grid,
+  .outline-grid {
     grid-template-columns: 1fr;
   }
 }

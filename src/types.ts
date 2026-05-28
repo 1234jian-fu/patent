@@ -10,3 +10,38 @@ export interface PatentProject {
   updatedAt: string;
   summary: string;
 }
+
+export interface CrawledPatentDocument {
+  url: string;
+  source: string;
+  title: string;
+  excerpt: string;
+  fetchedAt: string;
+}
+
+export interface PatentFeatureComparison {
+  feature: string;
+  evidence: string;
+  noveltyJudgement: string;
+}
+
+export interface PatentReference {
+  publicationNumber: string;
+  title: string;
+  source: string;
+  relevanceScore: number;
+  keyDisclosure: string;
+  url?: string;
+}
+
+export interface NoveltyAssessment {
+  riskScore: number;
+  conclusion: string;
+  noveltyPoints: string[];
+  featureComparison: PatentFeatureComparison[];
+  references: PatentReference[];
+  claimSuggestions: string[];
+  crawlerEvidence: CrawledPatentDocument[];
+  disclosureOutline?: Record<string, string | string[]>;
+  selfCheckRisks?: string[];
+}
