@@ -594,6 +594,52 @@ textarea {
   font-size: 13px;
 }
 
+.cnipa-tool {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #c8d7ed;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.cnipa-tool strong,
+.cnipa-tool p {
+  margin: 0;
+}
+
+.cnipa-tool p,
+.cnipa-result span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.cnipa-actions,
+.search-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.search-blocks span {
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cnipa-result {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #fff;
+}
+
 .insight-panel {
   padding: 18px;
   align-self: start;

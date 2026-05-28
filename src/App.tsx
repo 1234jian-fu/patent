@@ -165,6 +165,20 @@ const draftingRules = [
   "输出专业审查提示和可进一步强化的保护点建议",
 ];
 
+interface CnipaSearchResult {
+  blocks: string[];
+  hits: Array<{
+    title?: string;
+    pub_number?: string;
+    pubNumber?: string;
+    link?: string;
+    abstract?: string;
+  }>;
+  evidenceText?: string;
+  error?: string;
+  hint?: string;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const [assessment, setAssessment] = useState<NoveltyAssessment>(defaultAssessment);
@@ -336,7 +350,78 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [patentUrls, setPatentUrls] = useState("");
   const [manualEvidence, setManualEvidence] = useState("");
   const [isAssessing, setIsAssessing] = useState(false);
+  const [isGeneratingBlocks, setIsGeneratingBlocks] = useState(false);
+  const [isSearchingCnipa, setIsSearchingCnipa] = useState(false);
+  const [searchBlocks, setSearchBlocks] = useState<string[]>([]);
+  const [cnipaResult, setCnipaResult] = useState<CnipaSearchResult | null>(null);
   const [error, setError] = useState("");
+
+  async function generateSearchBlocks() {
+    setIsGeneratingBlocks(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/patent/search-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, inventionDisclosure }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "检索词生成失败");
+      setSearchBlocks(Array.isArray(data.blocks) ? data.blocks : []);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setIsGeneratingBlocks(false);
+    }
+  }
+
+  async function runCnipaSearch() {
+    setIsSearchingCnipa(true);
+    setError("");
+
+    try {
+      let blocks = searchBlocks;
+      if (blocks.length === 0) {
+        const blockResponse = await fetch("/api/patent/search-blocks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, inventionDisclosure }),
+        });
+        const blockData = await blockResponse.json();
+        if (!blockResponse.ok) throw new Error(blockData?.error || "检索词生成失败");
+        blocks = Array.isArray(blockData.blocks) ? blockData.blocks : [];
+        setSearchBlocks(blocks);
+      }
+
+      if (blocks.length === 0) throw new Error("未能生成可用的国知局检索词");
+
+      const response = await fetch("/api/patent/cnipa-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setCnipaResult(data);
+        throw new Error(data?.hint || data?.error || "国知局查新失败");
+      }
+      setCnipaResult(data);
+      if (data.evidenceText) {
+        setManualEvidence((current) => [current, data.evidenceText].filter(Boolean).join("\n\n"));
+      }
+      const urls = Array.isArray(data.hits)
+        ? data.hits.map((hit: { link?: string }) => hit.link).filter(Boolean)
+        : [];
+      if (urls.length > 0) {
+        setPatentUrls((current) => Array.from(new Set([...current.split(/\r?\n/).filter(Boolean), ...urls])).join("\n"));
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setIsSearchingCnipa(false);
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -407,6 +492,33 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
               <span>WIPO</span>
             </div>
           </label>
+          <div className="span-all cnipa-tool">
+            <div>
+              <strong>CNIPA 自动查新</strong>
+              <p>按 patent-disclosure-skill 规则先生成 2-8 个语义检索块，再尝试调用国知局公布公告检索脚本；结果会回填到人工证据区。</p>
+            </div>
+            <div className="cnipa-actions">
+              <button className="ghost-button" disabled={isGeneratingBlocks} onClick={generateSearchBlocks} type="button">
+                {isGeneratingBlocks ? "生成中..." : "生成检索词"}
+              </button>
+              <button className="ghost-button" disabled={isSearchingCnipa} onClick={runCnipaSearch} type="button">
+                {isSearchingCnipa ? "检索中..." : "运行国知局查新"}
+              </button>
+            </div>
+            {searchBlocks.length > 0 && (
+              <div className="search-blocks">
+                {searchBlocks.map((block) => (
+                  <span key={block}>{block}</span>
+                ))}
+              </div>
+            )}
+            {cnipaResult && (
+              <div className="cnipa-result">
+                <strong>{cnipaResult.hits?.length ? `命中 ${cnipaResult.hits.length} 条` : "暂无可用命中"}</strong>
+                <span>{cnipaResult.error || cnipaResult.hint || "检索结果已合并到证据区，可继续生成创新性评估。"}</span>
+              </div>
+            )}
+          </div>
           <label className="span-all">
             待申请技术方案
             <textarea value={inventionDisclosure} onChange={(event) => setInventionDisclosure(event.target.value)} />

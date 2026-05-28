@@ -35,6 +35,9 @@ const MINIMAX_DOCX_PROJECT = path.join(
   "MiniMaxAIDocx.Cli.csproj",
 );
 const MINIMAX_DOCX_XSD = path.join(MINIMAX_DOCX_DIR, "assets", "xsd", "wml-subset.xsd");
+const PATENT_DISCLOSURE_SKILL_DIR =
+  process.env.PATENT_DISCLOSURE_SKILL_DIR || path.join(process.cwd(), "..", "patent-disclosure-skill");
+const CNIPA_SEARCH_SCRIPT = path.join(PATENT_DISCLOSURE_SKILL_DIR, "tools", "cnipa_epub_search.py");
 
 const CHINA_PATENT_DRAFTER_RULES = `
 china-patent-drafter 真实 Skill 写法规则：
@@ -81,6 +84,15 @@ interface DisclosureDraftRequest {
   descriptionSections?: Array<{ heading: string; content: string }>;
   mermaidSystemDiagram?: string;
   mermaidFlow?: string;
+}
+
+interface CnipaHit {
+  title?: string;
+  pub_number?: string;
+  pubNumber?: string;
+  link?: string;
+  abstract?: string;
+  [key: string]: unknown;
 }
 
 function parseJsonObject(content: string) {
@@ -187,6 +199,119 @@ async function commandExists(command: string) {
   } catch {
     return false;
   }
+}
+
+async function getCnipaSearchStatus() {
+  const [pyReady, pythonReady, scriptExists] = await Promise.all([
+    commandExists("py"),
+    commandExists("python"),
+    fs
+      .access(CNIPA_SEARCH_SCRIPT)
+      .then(() => true)
+      .catch(() => false),
+  ]);
+
+  return {
+    ready: (pyReady || pythonReady) && scriptExists,
+    pythonCommand: pyReady ? "py" : pythonReady ? "python" : "",
+    pyReady,
+    pythonReady,
+    scriptExists,
+    scriptPath: CNIPA_SEARCH_SCRIPT,
+  };
+}
+
+function getCnipaHitKey(hit: CnipaHit) {
+  return String(hit.pub_number || hit.pubNumber || hit.link || hit.title || "").trim();
+}
+
+function isPlaceholderSearchBlock(block: string) {
+  return /语义块|泛词|关键词|示例|block|term|[\[\]]/i.test(block) || block.length < 2 || block.length > 18;
+}
+
+function fallbackSearchBlocks(title: string, disclosure: string) {
+  const stopWords = new Set([
+    "一种",
+    "方法",
+    "系统",
+    "装置",
+    "包括",
+    "根据",
+    "以及",
+    "进行",
+    "输出",
+    "技术",
+    "方案",
+    "节点",
+    "本方案",
+    "该方法",
+    "该系统",
+  ]);
+  const source = `${title}；${disclosure}`;
+  const candidates = source
+    .split(/[；;，,。.、\s]+/)
+    .flatMap((item) => {
+      const compact = item
+        .trim()
+        .replace(/^(一种|本方案|该方法|该系统|该装置|其特征在于)/, "")
+        .replace(/(的方法|的系统|的装置|方法|系统|装置)$/, "");
+      if (compact.length <= 14) return [compact];
+      return compact.match(/[\u4e00-\u9fa5A-Za-z0-9]{2,12}/g) || [];
+    })
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2 && item.length <= 14)
+    .filter((item) => !stopWords.has(item))
+    .filter((item) => !/^[0-9a-zA-Z]+$/.test(item));
+
+  const joined = source.replace(/\s+/g, "");
+  const domainTerms = [
+    "异常事件强度",
+    "采样频率",
+    "多模态传感器",
+    "功耗预算",
+    "融合权重",
+    "边缘节点",
+    "边缘计算",
+    "动态调整",
+    "低功耗",
+    "传感器融合",
+  ].filter((term) => joined.includes(term));
+
+  return Array.from(new Set([...domainTerms, ...candidates]))
+    .filter((block) => !isPlaceholderSearchBlock(block))
+    .slice(0, 8);
+}
+
+async function runCnipaSearchBlock(block: string, pythonCommand: string) {
+  const args = pythonCommand === "py" ? ["-3", CNIPA_SEARCH_SCRIPT, block] : [CNIPA_SEARCH_SCRIPT, block];
+  const { stdout, stderr } = await execFileAsync(pythonCommand, args, {
+    timeout: 75_000,
+    cwd: PATENT_DISCLOSURE_SKILL_DIR,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      PYTHONUTF8: "1",
+    },
+  });
+  const jsonLine = stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("EPUB_HITS_JSON:"));
+
+  if (!jsonLine) {
+    return {
+      block,
+      hits: [] as CnipaHit[],
+      stderr,
+      note: "No EPUB_HITS_JSON line returned.",
+    };
+  }
+
+  return {
+    block,
+    hits: JSON.parse(jsonLine.replace("EPUB_HITS_JSON:", "").trim()) as CnipaHit[],
+    stderr,
+    note: "",
+  };
 }
 
 async function getMiniMaxDocxStatus() {
@@ -438,6 +563,146 @@ app.get("/api/docx/status", async (_req, res) => {
         provider: "node-docx",
         ready: true,
       },
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.get("/api/cnipa/status", async (_req, res) => {
+  try {
+    res.json(await getCnipaSearchStatus());
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/search-blocks", async (req, res) => {
+  try {
+    const { title, inventionDisclosure } = req.body;
+    const disclosure = String(inventionDisclosure || "").trim();
+    if (!disclosure) {
+      return res.status(400).json({ error: "Missing inventionDisclosure." });
+    }
+
+    let data: Record<string, unknown> = {};
+    let fallbackReason = "";
+    try {
+      const content = await callDeepSeek({
+        responseFormatJson: true,
+        temperature: 0.15,
+        maxTokens: 1200,
+        messages: [
+          {
+            role: "system",
+            content:
+              "你是中国专利查新检索词专家。严格输出 JSON。根据 patent-disclosure-skill 的 prior_art_search 规则，生成 2-8 个适合国知局公布公告站分轮检索的中文语义块。不要生成过长整句，不要生成泛词。",
+          },
+          {
+            role: "user",
+            content: `请为以下中国专利请求生成 CNIPA 分轮检索语义块。
+
+输出 JSON 字段：
+- blocks: 2-8 个中文语义块，每个语义块 2-12 个中文字符为主，可包含必要英文缩写
+- strategy: 简短说明为什么这样拆分
+- avoidTerms: 不建议单独检索的泛词
+
+案件名称：${title || "未命名中国专利请求"}
+
+技术方案：
+${disclosure.slice(0, 8000)}`,
+          },
+        ],
+      });
+      data = parseJsonObject(content) as Record<string, unknown>;
+    } catch (error) {
+      fallbackReason = error instanceof Error ? error.message : String(error);
+      data = {
+        strategy: "DeepSeek 检索词生成暂不可用，已使用本地技术短语提取兜底。",
+        avoidTerms: ["方法", "系统", "装置", "技术", "方案"],
+      };
+    }
+
+    let blocks = Array.isArray(data.blocks)
+      ? data.blocks.map((block: unknown) => String(block).trim()).filter(Boolean).slice(0, 8)
+      : [];
+    const hasPlaceholderBlocks = blocks.some((block) => isPlaceholderSearchBlock(block));
+
+    blocks = blocks.filter((block) => !isPlaceholderSearchBlock(block));
+    if (blocks.length < 2) {
+      blocks = fallbackSearchBlocks(String(title || ""), disclosure);
+    }
+
+    res.json({
+      ...data,
+      blocks,
+      fallbackUsed: Boolean(fallbackReason) || hasPlaceholderBlocks || !Array.isArray(data.blocks),
+      fallbackReason,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/cnipa-search", async (req, res) => {
+  try {
+    const status = await getCnipaSearchStatus();
+    const blocks = Array.isArray(req.body?.blocks)
+      ? req.body.blocks.map((block: unknown) => String(block).trim()).filter(Boolean).slice(0, 8)
+      : [];
+
+    if (blocks.length === 0) {
+      return res.status(400).json({ error: "Missing search blocks." });
+    }
+
+    if (!status.ready) {
+      return res.status(503).json({
+        error: "CNIPA search tool is not ready.",
+        status,
+        hint: "Install Python dependencies from patent-disclosure-skill/tools/requirements-cnipa.txt and run python -m playwright install chromium.",
+      });
+    }
+
+    const rounds = [];
+    const hitMap = new Map<string, CnipaHit>();
+    for (const block of blocks) {
+      try {
+        const result = await runCnipaSearchBlock(block, status.pythonCommand);
+        rounds.push(result);
+        for (const hit of result.hits) {
+          const key = getCnipaHitKey(hit);
+          if (key && !hitMap.has(key)) {
+            hitMap.set(key, hit);
+          }
+        }
+      } catch (error) {
+        rounds.push({
+          block,
+          hits: [],
+          stderr: "",
+          note: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const hits = Array.from(hitMap.values());
+    res.json({
+      status,
+      blocks,
+      rounds,
+      hits,
+      evidenceText: hits
+        .map((hit) => {
+          const pub = hit.pub_number || hit.pubNumber || "未识别公开号";
+          return `【CNIPA】${pub} ${hit.title || ""}\n链接：${hit.link || ""}\n摘要：${hit.abstract || "该条无摘要字段"}`;
+        })
+        .join("\n\n"),
     });
   } catch (error) {
     res.status(500).json({
