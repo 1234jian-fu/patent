@@ -1081,7 +1081,7 @@ label small {
 
 .workbench {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 320px;
+  grid-template-columns: 260px minmax(0, 1fr) 340px;
   height: calc(100vh - 116px);
   min-height: 660px;
   border: 1px solid var(--line-soft);
@@ -1108,6 +1108,33 @@ label small {
   margin-top: 0;
 }
 
+.drafting-rail {
+  display: flex;
+  flex-direction: column;
+}
+
+.draft-source-compact {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #c8d7ed;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.draft-source-compact span,
+.draft-source-compact em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.draft-source-compact strong {
+  color: var(--primary);
+  line-height: 1.45;
+}
+
 .outline-item,
 .skill-action {
   width: 100%;
@@ -1118,9 +1145,23 @@ label small {
 }
 
 .outline-item {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   padding: 10px;
   color: var(--muted);
+}
+
+.outline-item span,
+.outline-item em {
+  font-style: normal;
+}
+
+.outline-item em {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .outline-item.active,
@@ -1150,6 +1191,49 @@ label small {
   font-size: 13px;
 }
 
+.draft-transform-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: #fbfcfe;
+}
+
+.draft-transform-step {
+  position: relative;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.draft-transform-step strong,
+.draft-transform-step span {
+  display: block;
+}
+
+.draft-transform-step strong {
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.draft-transform-step span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.draft-transform-step svg {
+  position: absolute;
+  right: -13px;
+  top: 28px;
+  color: var(--muted);
+  z-index: 1;
+}
+
 .editor-error {
   margin: 12px 18px 0;
   padding: 10px 12px;
@@ -1161,16 +1245,79 @@ label small {
 }
 
 .editor article {
-  max-width: 760px;
+  max-width: 900px;
   width: 100%;
   margin: 0 auto;
-  padding: 42px 28px;
+  padding: 34px 28px 48px;
   line-height: 1.85;
 }
 
 .editor article h2 {
-  text-align: center;
   margin-top: 0;
+}
+
+.draft-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.draft-section-heading span,
+.draft-section-heading p {
+  display: block;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.draft-section-heading h2 {
+  margin: 4px 0 6px;
+}
+
+.draft-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.draft-source-grid > div,
+.draft-rule-panel,
+.strategy-card {
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.draft-source-grid span,
+.strategy-card span {
+  display: block;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.draft-source-grid p,
+.draft-rule-panel p,
+.strategy-card p {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.draft-rule-panel {
+  margin-top: 12px;
+  border-left: 3px solid var(--primary);
+}
+
+.draft-stack {
+  display: grid;
+  gap: 10px;
 }
 
 .claim-block {
@@ -1267,6 +1414,29 @@ label small {
   background: #fff;
 }
 
+.assistant-context-card,
+.assistant-empty {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.assistant-context-card span,
+.assistant-empty p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.assistant-context-card strong,
+.assistant-empty strong {
+  color: var(--primary);
+}
+
 .assistant-result strong {
   color: var(--primary);
 }
@@ -1347,7 +1517,8 @@ label small {
   }
 
   .metric-row,
-  .stepper {
+  .stepper,
+  .draft-transform-strip {
     grid-template-columns: 1fr;
   }
 
@@ -1378,7 +1549,9 @@ label small {
   .project-row,
   .feature-row,
   .evidence-grid,
-  .outline-grid {
+  .outline-grid,
+  .draft-source-grid,
+  .draft-check-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -63,6 +63,12 @@ export interface DisclosureDraft {
   markdown: string;
 }
 
+export interface DraftingSource {
+  title: string;
+  inventionDisclosure: string;
+  dateRange: string;
+}
+
 export interface AssistantActionResult {
   title: string;
   content: string;

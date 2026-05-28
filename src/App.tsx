@@ -24,7 +24,7 @@ import {
   Sparkles,
   UploadCloud,
 } from "lucide-react";
-import type { AppTab, PatentProject } from "./types";
+import type { AppTab, DraftingSource, PatentProject } from "./types";
 import type { AssistantActionResult, DisclosureDraft, NoveltyAssessment } from "./types";
 
 const navItems: Array<{ id: AppTab; label: string; icon: typeof LayoutDashboard }> = [
@@ -144,6 +144,13 @@ const defaultDraft: DisclosureDraft = {
   markdown: "",
 };
 
+const defaultDraftingSource: DraftingSource = {
+  title: defaultAssessment.title || "多模态传感器的低功耗融合方法",
+  inventionDisclosure:
+    "本方案面向长期部署的多模态传感器节点，基于异常事件强度动态调整采样频率，并在边缘计算节点中根据功耗预算约束更新融合权重，输出设备状态判定结果。",
+  dateRange: "2018-01-01 至今",
+};
+
 const disclosurePipeline = [
   "项目扫描",
   "专利点挖掘",
@@ -190,7 +197,8 @@ function isInvalidDateRange(startDate: string, endDate: string) {
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const [assessment, setAssessment] = useState<NoveltyAssessment>(defaultAssessment);
-  const [draft, setDraft] = useState<DisclosureDraft | null>(defaultDraft);
+  const [draft, setDraft] = useState<DisclosureDraft | null>(null);
+  const [draftingSource, setDraftingSource] = useState<DraftingSource>(defaultDraftingSource);
   const activeTitle = navItems.find((item) => item.id === activeTab)?.label ?? "工作台";
 
   return (
@@ -247,15 +255,16 @@ export default function App() {
         {activeTab === "dashboard" && <Dashboard onJump={setActiveTab} />}
         {activeTab === "search" && (
           <NoveltySearch
-            onAssessment={(nextAssessment) => {
+            onAssessment={(nextAssessment, source) => {
               setAssessment(nextAssessment);
+              setDraftingSource(source);
               setDraft(null);
               setActiveTab("result");
             }}
           />
         )}
         {activeTab === "result" && <SearchResult assessment={assessment} onJump={setActiveTab} />}
-        {activeTab === "draft" && <DraftWorkbench assessment={assessment} draft={draft} onDraft={setDraft} />}
+        {activeTab === "draft" && <DraftWorkbench assessment={assessment} draft={draft} onDraft={setDraft} onJump={setActiveTab} source={draftingSource} />}
         {activeTab === "export" && <ExportReview assessment={assessment} draft={draft} />}
       </main>
     </div>
@@ -350,7 +359,7 @@ function Dashboard({ onJump }: { onJump: (tab: AppTab) => void }) {
   );
 }
 
-function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAssessment) => void }) {
+function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAssessment, source: DraftingSource) => void }) {
   const [title, setTitle] = useState("多模态传感器的低功耗融合方法");
   const [inventionDisclosure, setInventionDisclosure] = useState(
     "本方案面向长期部署的多模态传感器节点，基于异常事件强度动态调整采样频率，并在边缘计算节点中根据功耗预算约束更新融合权重，输出设备状态判定结果。",
@@ -485,7 +494,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         throw new Error(data?.error || "创新性评估失败");
       }
 
-      onAssessment(data);
+      onAssessment(data, {
+        title,
+        inventionDisclosure,
+        dateRange: formatDateRange(searchStartDate, searchEndDate),
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -841,16 +854,27 @@ function DraftWorkbench({
   assessment,
   draft,
   onDraft,
+  source,
+  onJump,
 }: {
   assessment: NoveltyAssessment;
   draft: DisclosureDraft | null;
   onDraft: (draft: DisclosureDraft) => void;
+  source: DraftingSource;
+  onJump: (tab: AppTab) => void;
 }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [assistantResult, setAssistantResult] = useState<AssistantActionResult | null>(null);
   const [assistantLoading, setAssistantLoading] = useState("");
-  const [activeSection, setActiveSection] = useState("权利要求书");
+  const [activeSection, setActiveSection] = useState("basis");
   const [error, setError] = useState("");
+  const activeDraft = draft || defaultDraft;
+  const isRealDraft = Boolean(draft);
+
+  function findSectionContent(keyword: string, fallback: ReactNode) {
+    const matched = activeDraft.descriptionSections.find((section) => section.heading.includes(keyword) || keyword.includes(section.heading.replace(/[一二三四五六七八九十、，,]/g, "")));
+    return matched?.content || fallback;
+  }
 
   async function generateDraft() {
     setIsGenerating(true);
@@ -860,11 +884,12 @@ function DraftWorkbench({
       const response = await fetch("/api/patent/draft-disclosure", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assessment }),
+        body: JSON.stringify({ assessment, inventionDisclosure: source.inventionDisclosure }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "交底书生成失败");
       onDraft(data);
+      setActiveSection("claims");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -880,7 +905,13 @@ function DraftWorkbench({
       const response = await fetch("/api/patent/assistant-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, assessment, draft }),
+        body: JSON.stringify({
+          action,
+          assessment,
+          draft: activeDraft,
+          source,
+          currentSection: currentSection?.label || "未选择章节",
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "AI 助手动作失败");
@@ -892,101 +923,246 @@ function DraftWorkbench({
     }
   }
 
-  const activeDraft = draft || defaultDraft;
-  const sectionMap: Record<string, ReactNode> = {
-    权利要求书: (
-      <>
-        <h2>权利要求书</h2>
-        {activeDraft.claims.map((claim, index) => (
-          <div className="claim-block" key={claim}>
-            <span>权利要求 {index + 1}</span>
-            <p>{claim}</p>
+  const transformSteps = [
+    ["输入", "原始技术方案、查新结论、对比文件证据"],
+    ["抽取", "技术问题、核心创新点、可保护特征"],
+    ["撰写", "权利要求优先，再反推说明书支撑"],
+    ["输出", "章节草稿、AI 审查、MD/DOCX 交付"],
+  ];
+
+  const sections = [
+    {
+      id: "basis",
+      label: "输入依据",
+      status: "已同步",
+      sourceLabel: "查新结果 + 原始技术披露",
+      description: "说明这一页吃什么输入，以及如何转成专利撰写任务。",
+      content: (
+        <>
+          <div className="draft-source-grid">
+            <div>
+              <span>原始技术方案</span>
+              <p>{source.inventionDisclosure}</p>
+            </div>
+            <div>
+              <span>查新结论</span>
+              <p>{assessment.conclusion}</p>
+            </div>
+            <div>
+              <span>检索日期范围</span>
+              <p>{source.dateRange}</p>
+            </div>
+            <div>
+              <span>证据来源</span>
+              <p>{assessment.references.length} 份对比文件，{assessment.crawlerEvidence.length} 个网页抓取来源。</p>
+            </div>
           </div>
-        ))}
-      </>
-    ),
-    摘要: (
-      <>
-        <h2>说明书摘要</h2>
-        <p>{activeDraft.abstractText}</p>
-        <div className="draft-check-grid">
-          <span>摘要字数：{activeDraft.abstractText.length} 字</span>
-          <span>建议范围：300 字以内</span>
-          <span>状态：{activeDraft.abstractText.length <= 300 ? "符合" : "需压缩"}</span>
+          <div className="draft-rule-panel">
+            <strong>转换规则</strong>
+            <p>先用查新结论锁定核心差异特征，再按 china-patent-drafter 规则生成权利要求策略；说明书必须反向支撑每个权利要求术语，缺失事实使用“需补充”或谨慎实施例表达。</p>
+          </div>
+        </>
+      ),
+    },
+    {
+      id: "strategy",
+      label: "权利要求策略",
+      status: assessment.claimSuggestions.length ? "可撰写" : "待补充",
+      sourceLabel: "创新点 + 特征对比 + 权利要求建议",
+      description: "决定独权范围、从权层级和需要补强的保护点。",
+      content: (
+        <div className="draft-stack">
+          {assessment.claimSuggestions.map((item, index) => (
+            <div className="strategy-card" key={item}>
+              <span>策略 {index + 1}</span>
+              <p>{item}</p>
+            </div>
+          ))}
         </div>
-      </>
-    ),
-    现有技术: (
-      <DraftSectionView
-        fallback="现有多传感器融合节点通常采用固定周期采样，长期部署时容易产生冗余采集和通信功耗。"
-        heading="现有技术及缺点"
-        sections={activeDraft.descriptionSections}
-      />
-    ),
-    技术问题: (
-      <DraftSectionView
-        fallback={assessment.disclosureOutline?.technicalProblem || "需要在保证异常事件识别准确性的同时降低多模态传感器节点的持续运行功耗。"}
-        heading="技术问题"
-        sections={activeDraft.descriptionSections}
-      />
-    ),
-    技术方案: (
-      <DraftSectionView
-        fallback={assessment.disclosureOutline?.solution || "通过异常事件强度调整采样频率，并将功耗预算作为边缘侧融合权重更新的约束条件。"}
-        heading="技术方案详细阐述"
-        sections={activeDraft.descriptionSections}
-      />
-    ),
-    实施例: (
-      <>
-        <h2>具体实施例</h2>
-        <p>根据当前交底材料，建议补充异常事件强度计算方式、采样频率调整系数、功耗预算阈值、融合权重更新规则和设备状态输出示例。</p>
-        <div className="draft-check-grid">
-          {assessment.selfCheckRisks?.map((risk) => <span key={risk}>{risk}</span>)}
+      ),
+    },
+    {
+      id: "claims",
+      label: "权利要求书",
+      status: isRealDraft ? "已生成" : "示例预览",
+      sourceLabel: "权利要求策略 → 独权 + 从权",
+      description: "Claim 1 覆盖核心发明构思，从权逐级限定变量、触发条件和应用场景。",
+      content: (
+        <>
+          {activeDraft.claims.map((claim, index) => (
+            <div className="claim-block" key={claim}>
+              <span>{index === 0 ? "独立权利要求" : `从属权利要求 ${index + 1}`}</span>
+              <p>{claim}</p>
+            </div>
+          ))}
+        </>
+      ),
+    },
+    {
+      id: "abstract",
+      label: "摘要",
+      status: activeDraft.abstractText.length <= 300 ? "合规" : "需压缩",
+      sourceLabel: "技术问题 + 核心方案 + 技术效果",
+      description: "摘要控制在约 300 字内，不能写授权结论、广告语或未提供实验数据。",
+      content: (
+        <>
+          <p>{activeDraft.abstractText}</p>
+          <div className="draft-check-grid">
+            <span>摘要字数：{activeDraft.abstractText.length} 字</span>
+            <span>建议范围：300 字以内</span>
+            <span>状态：{activeDraft.abstractText.length <= 300 ? "符合" : "需压缩"}</span>
+          </div>
+        </>
+      ),
+    },
+    {
+      id: "background",
+      label: "背景技术",
+      status: "需支撑问题",
+      sourceLabel: "查新证据 + 现有缺陷",
+      description: "只写现有技术客观缺陷，不夸大，也不把本方案效果提前写进去。",
+      content: <p>{findSectionContent("现有技术", "现有多传感器融合节点通常采用固定周期采样，长期部署时容易产生冗余采集和通信功耗。")}</p>,
+    },
+    {
+      id: "solution",
+      label: "发明内容",
+      status: "需闭环",
+      sourceLabel: "技术问题 → 技术方案 → 有益效果",
+      description: "形成中国专利说明书最关键的闭环，后续权利要求必须能被这里支撑。",
+      content: (
+        <div className="draft-source-grid">
+          <div>
+            <span>技术问题</span>
+            <p>{findSectionContent("技术问题", assessment.disclosureOutline?.technicalProblem || "需要补充技术问题。")}</p>
+          </div>
+          <div>
+            <span>技术方案</span>
+            <p>{findSectionContent("技术方案", assessment.disclosureOutline?.solution || "需要补充技术方案。")}</p>
+          </div>
+          <div>
+            <span>有益效果</span>
+            <p>{findSectionContent("有益效果", assessment.disclosureOutline?.beneficialEffects || "需要补充有益效果。")}</p>
+          </div>
+          <div>
+            <span>欲保护点</span>
+            <p>{assessment.disclosureOutline?.protectedPoints || "需要补充欲保护点。"}</p>
+          </div>
         </div>
-      </>
-    ),
-    附图说明: (
-      <>
-        <h2>附图说明</h2>
-        <p>建议摘要图采用方法流程图，覆盖 S1 采集候选信号、S2 计算异常事件强度、S3 调整采样频率、S4 更新融合权重、S5 输出状态判定结果。</p>
-        <pre className="mermaid-preview">{activeDraft.mermaidFlow || activeDraft.mermaidSystemDiagram || "暂无 Mermaid 图示源码。"}</pre>
-      </>
-    ),
-  };
+      ),
+    },
+    {
+      id: "embodiment",
+      label: "具体实施方式",
+      status: assessment.selfCheckRisks?.length ? "待补材料" : "可细化",
+      sourceLabel: "步骤 S1-S5 + 参数/规则/输出",
+      description: "把方案写成可实施步骤，补齐触发条件、参数范围、更新规则和输出指标。",
+      content: (
+        <>
+          <p>{findSectionContent("实施例", "建议补充异常事件强度计算方式、采样频率调整系数、功耗预算阈值、融合权重更新规则和设备状态输出示例。")}</p>
+          <div className="draft-check-grid">
+            {(assessment.selfCheckRisks?.length ? assessment.selfCheckRisks : ["需补充可执行步骤和参数范围。"]).map((risk) => <span key={risk}>{risk}</span>)}
+          </div>
+        </>
+      ),
+    },
+    {
+      id: "drawings",
+      label: "附图说明",
+      status: activeDraft.mermaidFlow || activeDraft.mermaidSystemDiagram ? "已生成图源" : "待生成",
+      sourceLabel: "方法流程图 / 系统架构图",
+      description: "方法类优先用流程图，图中步骤编号应与权利要求和说明书一致。",
+      content: (
+        <>
+          <p>建议摘要图采用方法流程图，覆盖 S1 采集候选信号、S2 计算异常事件强度、S3 调整采样频率、S4 更新融合权重、S5 输出状态判定结果。</p>
+          <pre className="mermaid-preview">{activeDraft.mermaidFlow || activeDraft.mermaidSystemDiagram || "暂无 Mermaid 图示源码。"}</pre>
+        </>
+      ),
+    },
+    {
+      id: "review",
+      label: "自检与导出",
+      status: activeDraft.formatIssues?.length ? "需复核" : "可导出",
+      sourceLabel: "格式问题 + DOCX 交付",
+      description: "正式交付前检查术语、附图标记、摘要字数、权利要求支撑和缺失信息。",
+      content: (
+        <>
+          <div className="draft-stack">
+            {(activeDraft.formatIssues?.length ? activeDraft.formatIssues : ["暂无明确格式问题，仍建议代理师复核。"]).map((issue) => (
+              <div className="strategy-card" key={issue}>
+                <span>审查项</span>
+                <p>{issue}</p>
+              </div>
+            ))}
+          </div>
+          <button className="primary-button" onClick={() => onJump("export")} type="button">
+            进入格式导出 <ArrowRight size={16} />
+          </button>
+        </>
+      ),
+    },
+  ];
+  const currentSection = sections.find((section) => section.id === activeSection) || sections[0];
 
   return (
     <div className="workbench">
-      <aside className="doc-outline">
-          <h3>文档结构</h3>
-          {["权利要求书", "摘要", "现有技术", "技术问题", "技术方案", "实施例", "附图说明"].map((item, index) => (
-            <button
+      <aside className="doc-outline drafting-rail">
+        <h3>撰写链路</h3>
+        <div className="draft-source-compact">
+          <span>当前案件</span>
+          <strong>{source.title}</strong>
+          <em>{source.dateRange}</em>
+        </div>
+        {sections.map((section) => (
+          <button
               type="button"
-              className={activeSection === item || (!activeSection && index === 0) ? "outline-item active" : "outline-item"}
-              key={item}
-              onClick={() => setActiveSection(item)}
+            className={activeSection === section.id ? "outline-item active" : "outline-item"}
+            key={section.id}
+            onClick={() => setActiveSection(section.id)}
           >
-            {item}
+            <span>{section.label}</span>
+            <em>{section.status}</em>
           </button>
-          ))}
+        ))}
         <button className="primary-button full draft-generate" disabled={isGenerating} onClick={generateDraft} type="button">
-          {isGenerating ? "生成中..." : "生成交底书草稿"}
+          {isGenerating ? "生成中..." : isRealDraft ? "重新生成交底书" : "生成交底书草稿"}
         </button>
       </aside>
 
       <section className="editor">
         <div className="editor-toolbar">
-          <Badge tone={draft ? "ok" : "warn"}>{draft ? "DeepSeek 已生成" : "示例草稿"}</Badge>
-          <span>{activeDraft.title} · 当前查看：{activeSection}</span>
+          <Badge tone={isRealDraft ? "ok" : "warn"}>{isRealDraft ? "DeepSeek 已生成" : "示例预览，待生成"}</Badge>
+          <span>{activeDraft.title} · 当前章节：{currentSection.label}</span>
         </div>
         {error && <div className="editor-error">{error}</div>}
-        <article>
-          {sectionMap[activeSection] || sectionMap["权利要求书"]}
+        <div className="draft-transform-strip">
+          {transformSteps.map(([label, text], index) => (
+            <div className="draft-transform-step" key={label}>
+              <strong>{label}</strong>
+              <span>{text}</span>
+              {index < transformSteps.length - 1 && <ArrowRight size={14} />}
+            </div>
+          ))}
+        </div>
+        <article className="draft-article">
+          <div className="draft-section-heading">
+            <div>
+              <span>{currentSection.sourceLabel}</span>
+              <h2>{currentSection.label}</h2>
+              <p>{currentSection.description}</p>
+            </div>
+            <Badge tone={currentSection.status.includes("需") || currentSection.status.includes("待") ? "warn" : "ok"}>{currentSection.status}</Badge>
+          </div>
+          {currentSection.content}
         </article>
       </section>
 
       <aside className="assistant-panel">
         <h3>AI Skills 面板</h3>
+        <div className="assistant-context-card">
+          <span>当前动作上下文</span>
+          <strong>{currentSection.label}</strong>
+          <p>AI 动作会携带当前章节、查新结论、原始技术方案和当前草稿，输出只作为建议区展示。</p>
+        </div>
         <SkillAction icon={BookOpenText} title="按交底书模板生成章节" loading={assistantLoading} onRun={runAssistantAction} />
         <SkillAction icon={Scale} title="生成从属权利要求" loading={assistantLoading} onRun={runAssistantAction} />
         <SkillAction icon={ShieldCheck} title="保护范围风险审查" loading={assistantLoading} onRun={runAssistantAction} />
@@ -997,34 +1173,20 @@ function DraftWorkbench({
           <AlertTriangle size={18} />
           {activeDraft.formatIssues[0] || "请在定稿前补齐参数、实施例和附图标记。"}
         </div>
-        {assistantResult && (
+        {assistantResult ? (
           <div className="assistant-result">
             <strong>{assistantResult.title}</strong>
             <p>{assistantResult.content}</p>
             {assistantResult.risks && assistantResult.risks.length > 0 && <span>风险：{assistantResult.risks.join("；")}</span>}
           </div>
+        ) : (
+          <div className="assistant-empty">
+            <strong>尚未执行章节动作</strong>
+            <p>选择左侧章节后点击右侧 Skill，输出会显示在这里，便于逐段审查和复制进草稿。</p>
+          </div>
         )}
       </aside>
     </div>
-  );
-}
-
-function DraftSectionView({
-  heading,
-  sections,
-  fallback,
-}: {
-  heading: string;
-  sections: DisclosureDraft["descriptionSections"];
-  fallback: ReactNode;
-}) {
-  const matched = sections.find((section) => section.heading.includes(heading) || heading.includes(section.heading.replace(/[一二三四五六七八九十、，,]/g, "")));
-
-  return (
-    <>
-      <h2>{heading}</h2>
-      <p>{matched?.content || fallback}</p>
-    </>
   );
 }
 

@@ -1121,8 +1121,9 @@ ${String(inventionDisclosure || "").slice(0, 12000)}`,
 
 app.post("/api/patent/assistant-action", async (req, res) => {
   try {
-    const { action, assessment, draft } = req.body;
+    const { action, assessment, draft, source, currentSection } = req.body;
     const actionName = String(action || "说明书反向扩写");
+    const sectionName = String(currentSection || "未指定章节");
     const content = await callDeepSeek({
       responseFormatJson: true,
       temperature: 0.2,
@@ -1136,6 +1137,7 @@ app.post("/api/patent/assistant-action", async (req, res) => {
         {
           role: "user",
           content: `请执行 AI 助手动作：${actionName}
+当前处理章节：${sectionName}
 
 输出 JSON 字段：
 - title: 本次动作标题
@@ -1144,6 +1146,9 @@ app.post("/api/patent/assistant-action", async (req, res) => {
 
 查新结论：
 ${JSON.stringify(assessment || {}, null, 2)}
+
+原始技术披露：
+${JSON.stringify(source || {}, null, 2)}
 
 当前草稿：
 ${JSON.stringify(draft || {}, null, 2)}`,
