@@ -65,6 +65,7 @@ const projects: PatentProject[] = [
 
 const skills = [
   { name: "中国专利交底书", desc: "扫描项目、挖掘专利点、查新并生成 md/docx 交底书", icon: FileText },
+  { name: "中国专利撰写规则", desc: "接入 Oscima2026/china-patent-drafter：独权、从权、摘要图、审查提示", icon: PenLine },
   { name: "交底书解析", desc: "提取技术问题、方案、效果与实施例", icon: BookOpenText },
   { name: "创新性查新", desc: "生成检索式、IPC 建议与风险分", icon: Search },
   { name: "对比文件分析", desc: "Top 5 对比文件逐项特征映射", icon: GitCompareArrows },
@@ -148,10 +149,20 @@ const disclosurePipeline = [
   "项目扫描",
   "专利点挖掘",
   "CNIPA 查新",
+  "写法规则校准",
   "交底书预览",
   "mermaid 图示",
   "md/docx 交付",
   "自检与迭代",
+];
+
+const draftingRules = [
+  "先抽取技术领域、缺陷、创新点、可保护点和缺失信息",
+  "完整草案默认 1 项独权 + 6-12 项从权",
+  "方法/算法类方案用 S1-S5 写可执行步骤",
+  "摘要控制在约 300 字，写明问题、方案和效果",
+  "摘要图按方法流程图、装置结构图或系统架构图生成",
+  "输出专业审查提示和可进一步强化的保护点建议",
 ];
 
 export default function App() {
@@ -286,14 +297,19 @@ function Dashboard({ onJump }: { onJump: (tab: AppTab) => void }) {
         <div className="injected-skill">
           <div>
             <span className="eyebrow">Injected Skill</span>
-            <strong>中国专利交底书 Skill</strong>
-            <p>来自 handsomestWei/patent-disclosure-skill：覆盖专利点挖掘、国知局公布公告查新、脱敏交底书成稿、自检和迭代留档。</p>
+            <strong>中国专利双 Skill 写作引擎</strong>
+            <p>融合 handsomestWei/patent-disclosure-skill 与 Oscima2026/china-patent-drafter-skill：覆盖专利点挖掘、查新证据、权利要求策略、摘要图、交底书成稿、自检和 DOCX 交付。</p>
           </div>
           <div className="pipeline-strip">
             {disclosurePipeline.map((step) => (
               <span key={step}>{step}</span>
             ))}
           </div>
+        </div>
+        <div className="rule-strip">
+          {draftingRules.map((rule) => (
+            <span key={rule}>{rule}</span>
+          ))}
         </div>
         <div className="skill-grid">
           {skills.map((skill) => {
@@ -370,7 +386,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         <div className="upload-zone">
           <UploadCloud size={42} />
           <strong>中国专利请求与对比文件证据</strong>
-          <p>输入待申请技术方案，并粘贴中国专利公布公告、Google Patents、EPO、WIPO 等对比文件链接，系统抓取正文后输出创新性判断。</p>
+          <p>给课题组成员使用：输入待申请技术方案，并粘贴中国专利公布公告、Google Patents、EPO、WIPO 等对比文件链接，系统抓取正文后输出创新性判断和撰写入口。</p>
         </div>
 
         <div className="form-grid">
@@ -429,7 +445,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         </div>
         <Insight title="核心技术问题" text="现有融合节点持续采集导致功耗升高，难以满足长期部署场景。" />
         <Insight title="关键技术特征" text="事件触发采样、分层特征融合、边缘侧动态阈值更新。" />
-        <Insight title="输出内容" text="风险分、创新点、特征对比表、Top 对比文件、权利要求补强建议。" />
+        <Insight title="输出内容" text="风险分、创新点、特征对比表、Top 对比文件、权利要求策略、摘要图建议和审查提示。" />
       </aside>
     </form>
   );

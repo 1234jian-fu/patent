@@ -444,6 +444,23 @@ button:disabled {
   font-weight: 700;
 }
 
+.rule-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.rule-strip span {
+  padding: 9px 10px;
+  border-left: 3px solid var(--primary);
+  border-radius: 6px;
+  background: #f5f8fc;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .skill-card {
   padding: 14px;
   border: 1px solid var(--line-soft);
@@ -1048,6 +1065,7 @@ textarea {
   .nav-list,
   .form-grid,
   .skill-grid,
+  .rule-strip,
   .reference-row,
   .project-row,
   .feature-row,
