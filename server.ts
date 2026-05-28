@@ -942,10 +942,12 @@ app.post("/api/patent/search-blocks", async (req, res) => {
   try {
     const { title, inventionDisclosure, dateRange } = req.body;
     const disclosure = String(inventionDisclosure || "").trim();
+    const requestTitle = String(title || "");
     const searchDateRange = String(dateRange || "未限定").trim();
     if (!disclosure) {
       return res.status(400).json({ error: "Missing inventionDisclosure." });
     }
+    const anchors = extractSearchAnchors(requestTitle, disclosure);
 
     let data: Record<string, unknown> = {};
     let fallbackReason = "";
@@ -969,7 +971,10 @@ app.post("/api/patent/search-blocks", async (req, res) => {
 - strategy: 简短说明为什么这样拆分
 - avoidTerms: 不建议单独检索的泛词
 
-案件名称：${title || "未命名中国专利请求"}
+约束：只能围绕下列从题目和技术方案中抽取的锚定术语生成检索块，不得引入锚定术语之外的新技术主题。
+锚定术语：${anchors.join("、") || "无"}
+
+案件名称：${requestTitle || "未命名中国专利请求"}
 检索日期范围：${searchDateRange}
 
 技术方案：
@@ -991,15 +996,16 @@ ${disclosure.slice(0, 8000)}`,
       : [];
     const hasPlaceholderBlocks = blocks.some((block) => isPlaceholderSearchBlock(block));
 
-    blocks = blocks.filter((block) => !isPlaceholderSearchBlock(block));
+    blocks = blocks.filter((block) => isGroundedSearchBlock(block, requestTitle, disclosure, anchors));
     if (blocks.length < 2) {
-      blocks = fallbackSearchBlocks(String(title || ""), disclosure);
+      blocks = fallbackSearchBlocks(requestTitle, disclosure);
     }
 
     res.json({
       ...data,
       blocks,
-      fallbackUsed: Boolean(fallbackReason) || hasPlaceholderBlocks || !Array.isArray(data.blocks),
+      groundedTerms: anchors.slice(0, 12),
+      fallbackUsed: Boolean(fallbackReason) || hasPlaceholderBlocks || !Array.isArray(data.blocks) || blocks.length < 2,
       fallbackReason,
     });
   } catch (error) {
