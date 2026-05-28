@@ -893,21 +893,83 @@ function DraftWorkbench({
   }
 
   const activeDraft = draft || defaultDraft;
+  const sectionMap: Record<string, ReactNode> = {
+    权利要求书: (
+      <>
+        <h2>权利要求书</h2>
+        {activeDraft.claims.map((claim, index) => (
+          <div className="claim-block" key={claim}>
+            <span>权利要求 {index + 1}</span>
+            <p>{claim}</p>
+          </div>
+        ))}
+      </>
+    ),
+    摘要: (
+      <>
+        <h2>说明书摘要</h2>
+        <p>{activeDraft.abstractText}</p>
+        <div className="draft-check-grid">
+          <span>摘要字数：{activeDraft.abstractText.length} 字</span>
+          <span>建议范围：300 字以内</span>
+          <span>状态：{activeDraft.abstractText.length <= 300 ? "符合" : "需压缩"}</span>
+        </div>
+      </>
+    ),
+    现有技术: (
+      <DraftSectionView
+        fallback="现有多传感器融合节点通常采用固定周期采样，长期部署时容易产生冗余采集和通信功耗。"
+        heading="现有技术及缺点"
+        sections={activeDraft.descriptionSections}
+      />
+    ),
+    技术问题: (
+      <DraftSectionView
+        fallback={assessment.disclosureOutline?.technicalProblem || "需要在保证异常事件识别准确性的同时降低多模态传感器节点的持续运行功耗。"}
+        heading="技术问题"
+        sections={activeDraft.descriptionSections}
+      />
+    ),
+    技术方案: (
+      <DraftSectionView
+        fallback={assessment.disclosureOutline?.solution || "通过异常事件强度调整采样频率，并将功耗预算作为边缘侧融合权重更新的约束条件。"}
+        heading="技术方案详细阐述"
+        sections={activeDraft.descriptionSections}
+      />
+    ),
+    实施例: (
+      <>
+        <h2>具体实施例</h2>
+        <p>根据当前交底材料，建议补充异常事件强度计算方式、采样频率调整系数、功耗预算阈值、融合权重更新规则和设备状态输出示例。</p>
+        <div className="draft-check-grid">
+          {assessment.selfCheckRisks?.map((risk) => <span key={risk}>{risk}</span>)}
+        </div>
+      </>
+    ),
+    附图说明: (
+      <>
+        <h2>附图说明</h2>
+        <p>建议摘要图采用方法流程图，覆盖 S1 采集候选信号、S2 计算异常事件强度、S3 调整采样频率、S4 更新融合权重、S5 输出状态判定结果。</p>
+        <pre className="mermaid-preview">{activeDraft.mermaidFlow || activeDraft.mermaidSystemDiagram || "暂无 Mermaid 图示源码。"}</pre>
+      </>
+    ),
+  };
 
   return (
     <div className="workbench">
       <aside className="doc-outline">
-        <h3>文档结构</h3>
-        {["权利要求书", "摘要", "现有技术", "技术问题", "技术方案", "实施例", "附图说明"].map((item, index) => (
-          <button
-            className={activeSection === item || (!activeSection && index === 0) ? "outline-item active" : "outline-item"}
-            key={item}
-            onClick={() => setActiveSection(item)}
+          <h3>文档结构</h3>
+          {["权利要求书", "摘要", "现有技术", "技术问题", "技术方案", "实施例", "附图说明"].map((item, index) => (
+            <button
+              type="button"
+              className={activeSection === item || (!activeSection && index === 0) ? "outline-item active" : "outline-item"}
+              key={item}
+              onClick={() => setActiveSection(item)}
           >
             {item}
           </button>
-        ))}
-        <button className="primary-button full draft-generate" disabled={isGenerating} onClick={generateDraft}>
+          ))}
+        <button className="primary-button full draft-generate" disabled={isGenerating} onClick={generateDraft} type="button">
           {isGenerating ? "生成中..." : "生成交底书草稿"}
         </button>
       </aside>
@@ -919,18 +981,7 @@ function DraftWorkbench({
         </div>
         {error && <div className="editor-error">{error}</div>}
         <article>
-          <h2>权利要求书</h2>
-          {activeDraft.claims.map((claim) => (
-            <p key={claim}>{claim}</p>
-          ))}
-          <h2>说明书摘要</h2>
-          <p>{activeDraft.abstractText}</p>
-          {activeDraft.descriptionSections.map((section) => (
-            <section className="draft-section" key={section.heading}>
-              <h3>{section.heading}</h3>
-              <p>{section.content}</p>
-            </section>
-          ))}
+          {sectionMap[activeSection] || sectionMap["权利要求书"]}
         </article>
       </section>
 
@@ -955,6 +1006,25 @@ function DraftWorkbench({
         )}
       </aside>
     </div>
+  );
+}
+
+function DraftSectionView({
+  heading,
+  sections,
+  fallback,
+}: {
+  heading: string;
+  sections: DisclosureDraft["descriptionSections"];
+  fallback: ReactNode;
+}) {
+  const matched = sections.find((section) => section.heading.includes(heading) || heading.includes(section.heading.replace(/[一二三四五六七八九十、，,]/g, "")));
+
+  return (
+    <>
+      <h2>{heading}</h2>
+      <p>{matched?.content || fallback}</p>
+    </>
   );
 }
 
@@ -1220,7 +1290,7 @@ function SkillAction({
   onRun?: (title: string) => void;
 }) {
   return (
-    <button className="skill-action" disabled={loading === title} onClick={() => onRun?.(title)}>
+    <button className="skill-action" disabled={loading === title} onClick={() => onRun?.(title)} type="button">
       <Icon size={18} />
       <span>{loading === title ? "处理中..." : title}</span>
       <ChevronRight size={16} />
