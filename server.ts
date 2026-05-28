@@ -95,6 +95,26 @@ interface CnipaHit {
   [key: string]: unknown;
 }
 
+interface NoveltyReportRequest {
+  title?: string;
+  riskScore?: number;
+  conclusion?: string;
+  noveltyPoints?: string[];
+  featureComparison?: Array<{ feature?: string; evidence?: string; noveltyJudgement?: string }>;
+  references?: Array<{
+    publicationNumber?: string;
+    title?: string;
+    source?: string;
+    relevanceScore?: number;
+    keyDisclosure?: string;
+    url?: string;
+  }>;
+  claimSuggestions?: string[];
+  crawlerEvidence?: CrawledPatentDocument[];
+  disclosureOutline?: Record<string, string | string[]>;
+  selfCheckRisks?: string[];
+}
+
 function parseJsonObject(content: string) {
   const cleaned = content
     .trim()
@@ -181,15 +201,176 @@ async function createNodeDocxBuffer(draft: DisclosureDraftRequest) {
   return Packer.toBuffer(doc);
 }
 
-function sendDocx(res: express.Response, draft: DisclosureDraftRequest, buffer: Buffer) {
-  const filename = encodeURIComponent(`${sanitizeFilename(draft.title || "技术交底书")}.docx`);
+function sendDocxBuffer(res: express.Response, filename: string, buffer: Buffer) {
+  const encodedFilename = encodeURIComponent(`${sanitizeFilename(filename)}.docx`);
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodedFilename}`);
   res.send(buffer);
+}
+
+function sendDocx(res: express.Response, draft: DisclosureDraftRequest, buffer: Buffer) {
+  sendDocxBuffer(res, draft.title || "技术交底书", buffer);
 }
 
 function sanitizeFilename(filename: string) {
   return filename.replace(/[\\/:*?"<>|\r\n]/g, "").trim().slice(0, 70) || "PatentDraft";
+}
+
+function textValue(value: unknown, fallback = "未提供") {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function reportParagraph(text: unknown) {
+  return new Paragraph({
+    text: textValue(text, ""),
+    spacing: { after: 160 },
+  });
+}
+
+function labelParagraph(label: string, value: unknown) {
+  return new Paragraph({
+    children: [
+      new TextRun({ text: `${label}：`, bold: true }),
+      new TextRun(textValue(value)),
+    ],
+    spacing: { after: 120 },
+  });
+}
+
+function bulletParagraph(text: unknown) {
+  return new Paragraph({
+    text: textValue(text),
+    bullet: { level: 0 },
+    spacing: { after: 100 },
+  });
+}
+
+function outlineLabel(key: string) {
+  return (
+    {
+      background: "现有技术背景",
+      technicalProblem: "技术问题",
+      solution: "技术方案",
+      beneficialEffects: "有益效果",
+      protectedPoints: "技术关键点和欲保护点",
+    }[key] || key
+  );
+}
+
+async function createNoveltyReportDocxBuffer(assessment: NoveltyReportRequest) {
+  const title = assessment.title || "未命名中国专利请求";
+  const score = Math.max(0, Math.min(100, Number(assessment.riskScore) || 0));
+  const references = Array.isArray(assessment.references) ? assessment.references : [];
+  const featureComparison = Array.isArray(assessment.featureComparison) ? assessment.featureComparison : [];
+  const noveltyPoints = Array.isArray(assessment.noveltyPoints) ? assessment.noveltyPoints : [];
+  const claimSuggestions = Array.isArray(assessment.claimSuggestions) ? assessment.claimSuggestions : [];
+  const crawlerEvidence = Array.isArray(assessment.crawlerEvidence) ? assessment.crawlerEvidence : [];
+  const selfCheckRisks = Array.isArray(assessment.selfCheckRisks) ? assessment.selfCheckRisks : [];
+
+  const children: Paragraph[] = [
+    new Paragraph({ text: "中国专利创新性查新报告", heading: HeadingLevel.TITLE, spacing: { after: 300 } }),
+    labelParagraph("案件名称", title),
+    labelParagraph("生成时间", new Date().toLocaleString("zh-CN")),
+    labelParagraph("创新性风险分", `${score}/100`),
+    labelParagraph("证据来源数量", `${references.length} 份对比文件，${crawlerEvidence.length} 个网页抓取来源`),
+    new Paragraph({ text: "一、查新结论", heading: HeadingLevel.HEADING_1 }),
+    reportParagraph(assessment.conclusion || "暂无查新结论。"),
+    new Paragraph({ text: "二、有证据支撑的创新点", heading: HeadingLevel.HEADING_1 }),
+    ...(noveltyPoints.length ? noveltyPoints.map((point, index) => bulletParagraph(`${index + 1}. ${point}`)) : [reportParagraph("暂无创新点。")]),
+    new Paragraph({ text: "三、Top 对比文件", heading: HeadingLevel.HEADING_1 }),
+  ];
+
+  if (references.length) {
+    references.forEach((ref, index) => {
+      children.push(new Paragraph({ text: `${index + 1}. ${ref.publicationNumber || ref.source || "未识别公开号"}`, heading: HeadingLevel.HEADING_2 }));
+      children.push(labelParagraph("标题", ref.title));
+      children.push(labelParagraph("来源", ref.source));
+      children.push(labelParagraph("相关度", `${Number(ref.relevanceScore) || 0}%`));
+      children.push(labelParagraph("关键公开内容", ref.keyDisclosure));
+      children.push(labelParagraph("链接", ref.url || "未提供"));
+    });
+  } else {
+    children.push(reportParagraph("暂无已确认对比文件。"));
+  }
+
+  children.push(new Paragraph({ text: "四、特征 1:1 对比", heading: HeadingLevel.HEADING_1 }));
+  if (featureComparison.length) {
+    featureComparison.forEach((item, index) => {
+      children.push(new Paragraph({ text: `${index + 1}. ${textValue(item.feature, "未命名特征")}`, heading: HeadingLevel.HEADING_2 }));
+      children.push(labelParagraph("对比证据", item.evidence));
+      children.push(labelParagraph("创新性判断", item.noveltyJudgement));
+    });
+  } else {
+    children.push(reportParagraph("暂无特征比对。"));
+  }
+
+  children.push(new Paragraph({ text: "五、权利要求撰写建议", heading: HeadingLevel.HEADING_1 }));
+  children.push(...(claimSuggestions.length ? claimSuggestions.map((item, index) => bulletParagraph(`${index + 1}. ${item}`)) : [reportParagraph("暂无权利要求建议。")]));
+
+  children.push(new Paragraph({ text: "六、技术交底书预览大纲", heading: HeadingLevel.HEADING_1 }));
+  if (assessment.disclosureOutline) {
+    Object.entries(assessment.disclosureOutline).forEach(([key, value]) => {
+      children.push(labelParagraph(outlineLabel(key), Array.isArray(value) ? value.join("；") : value));
+    });
+  } else {
+    children.push(reportParagraph("暂无交底书大纲。"));
+  }
+
+  children.push(new Paragraph({ text: "七、内部自检风险", heading: HeadingLevel.HEADING_1 }));
+  children.push(...(selfCheckRisks.length ? selfCheckRisks.map((item, index) => bulletParagraph(`${index + 1}. ${item}`)) : [reportParagraph("暂无明确自检风险。")]));
+
+  children.push(new Paragraph({ text: "八、网页抓取证据", heading: HeadingLevel.HEADING_1 }));
+  if (crawlerEvidence.length) {
+    crawlerEvidence.forEach((doc, index) => {
+      children.push(new Paragraph({ text: `${index + 1}. ${doc.title}`, heading: HeadingLevel.HEADING_2 }));
+      children.push(labelParagraph("来源", doc.source));
+      children.push(labelParagraph("URL", doc.url));
+      children.push(labelParagraph("抓取时间", doc.fetchedAt));
+      children.push(reportParagraph(`摘录：${String(doc.excerpt || "").slice(0, 1000)}`));
+    });
+  } else {
+    children.push(reportParagraph("暂无网页抓取证据。"));
+  }
+
+  children.push(new Paragraph({ text: "九、专业提示", heading: HeadingLevel.HEADING_1 }));
+  children.push(reportParagraph("本报告用于课题组内部技术评估和专利撰写准备，不等同于专利授权结论或正式检索报告。正式提交前，建议由具备资质的专利代理师或专利律师结合完整现有技术检索、申请策略和最新 CNIPA 要求审查修改。"));
+
+  const doc = new Document({
+    creator: "PatentDraft",
+    title: `${title} 创新性查新报告`,
+    description: "PatentDraft generated novelty search report",
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: {
+              top: 1440,
+              right: 1440,
+              bottom: 1440,
+              left: 1440,
+            },
+          },
+        },
+        children,
+      },
+    ],
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: "Microsoft YaHei",
+            size: 21,
+          },
+          paragraph: {
+            spacing: { line: 360 },
+          },
+        },
+      },
+    },
+  });
+
+  return Packer.toBuffer(doc);
 }
 
 async function commandExists(command: string) {
@@ -983,6 +1164,19 @@ app.post("/api/patent/export-docx", async (req, res) => {
     const draft: DisclosureDraftRequest = req.body?.draft || {};
     res.setHeader("X-Docx-Provider", "node-docx");
     sendDocx(res, draft, await createNodeDocxBuffer(draft));
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/export-novelty-report-docx", async (req, res) => {
+  try {
+    const assessment: NoveltyReportRequest = req.body?.assessment || {};
+    const title = `${assessment.title || "查新报告"}_创新性查新报告`;
+    res.setHeader("X-Docx-Provider", "node-docx");
+    sendDocxBuffer(res, title, await createNoveltyReportDocxBuffer(assessment));
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),

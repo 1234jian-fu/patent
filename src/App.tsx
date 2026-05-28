@@ -13,7 +13,6 @@ import {
   FileCheck2,
   FileSearch,
   FileText,
-  Filter,
   GitCompareArrows,
   LayoutDashboard,
   ListChecks,
@@ -238,7 +237,7 @@ export default function App() {
             <h1>{activeTitle}</h1>
           </div>
           <div className="top-actions">
-            <button className="ghost-button">模板库</button>
+            <button className="ghost-button" onClick={() => setActiveTab("draft")}>模板库</button>
             <button className="primary-button" onClick={() => setActiveTab("search")}>
               新建查新 <ArrowRight size={16} />
             </button>
@@ -291,7 +290,7 @@ function Dashboard({ onJump }: { onJump: (tab: AppTab) => void }) {
       <section className="content-card">
         <div className="section-title">
           <h3>最近项目</h3>
-          <button className="text-button">查看全部</button>
+          <button className="text-button" onClick={() => onJump("result")}>查看全部</button>
         </div>
         <div className="project-list">
           {projects.map((project) => (
@@ -622,8 +621,42 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 }
 
 function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; onJump: (tab: AppTab) => void }) {
+  const [reportError, setReportError] = useState("");
+  const [isExportingReport, setIsExportingReport] = useState(false);
   const score = Math.max(0, Math.min(100, Number(assessment.riskScore) || 0));
   const riskTone = score >= 70 ? "danger" : score >= 45 ? "warn" : "ok";
+  const riskLabel = score >= 70 ? "高风险" : score >= 45 ? "中风险" : "风险可控";
+  const riskTitle = score >= 70 ? "创新性风险较高，需重构差异特征" : score >= 45 ? "中等风险，需补强技术效果" : "风险可控，可进入撰写";
+  const nextStep =
+    score >= 70
+      ? "建议先补充检索、收窄独权核心特征，并寻找可验证的结构或步骤差异。"
+      : score >= 45
+        ? "建议把差异特征写成步骤间的耦合关系，同时补足参数范围、触发条件和技术效果。"
+        : "可进入权利要求设计，优先把已验证差异写入独权，再用从权覆盖变形方案。";
+  const sourceCount = assessment.references.length + assessment.crawlerEvidence.length;
+
+  async function handleDownloadReport() {
+    setIsExportingReport(true);
+    setReportError("");
+
+    try {
+      const response = await fetch("/api/patent/export-novelty-report-docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assessment }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "查新报告 DOCX 导出失败");
+      }
+      const blob = await response.blob();
+      downloadBlob(`${sanitizeFilename(assessment.title || "查新报告")}_创新性查新报告_${getTimestamp()}.docx`, blob);
+    } catch (nextError) {
+      setReportError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setIsExportingReport(false);
+    }
+  }
 
   return (
     <div className="result-layout">
@@ -632,11 +665,25 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
         <div className="score-ring" style={{ "--score": `${score}%` } as CSSProperties}>
           {score}
         </div>
-        <h2>{score >= 70 ? "创新性风险较高，需重构差异特征" : score >= 45 ? "中等风险，需补强技术效果" : "风险可控，可进入撰写"}</h2>
+        <Badge tone={riskTone}>{riskLabel}</Badge>
+        <h2>{riskTitle}</h2>
         <p>{assessment.conclusion}</p>
+        <div className="score-detail">
+          <strong>下一步处理建议</strong>
+          <span>{nextStep}</span>
+        </div>
+        <div className="score-stats">
+          <span><strong>{assessment.noveltyPoints.length}</strong>创新点</span>
+          <span><strong>{assessment.featureComparison.length}</strong>特征对比</span>
+          <span><strong>{sourceCount}</strong>证据来源</span>
+        </div>
         <button className="primary-button" onClick={() => onJump("draft")}>
           进入智能撰写 <ArrowRight size={16} />
         </button>
+        <button className="ghost-button" disabled={isExportingReport} onClick={handleDownloadReport}>
+          <Download size={16} /> {isExportingReport ? "正在生成..." : "下载 Word 查新报告"}
+        </button>
+        {reportError && <div className="form-error">{reportError}</div>}
       </section>
 
       <section className="content-card">
@@ -646,8 +693,13 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
         </div>
         <div className="novelty-list">
           {assessment.noveltyPoints.map((point, index) => (
-            <div key={point}>
-              <Insight title={`差异点 ${String(index + 1).padStart(2, "0")}`} text={point} />
+            <div className="novelty-card" key={point}>
+              <div className="novelty-index">{String(index + 1).padStart(2, "0")}</div>
+              <div>
+                <strong>差异点 {String(index + 1).padStart(2, "0")}</strong>
+                <p>{point}</p>
+                <span>写作落点：优先转化为独权限定关系或从权补强条件。</span>
+              </div>
             </div>
           ))}
         </div>
@@ -656,20 +708,27 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
       <section className="content-card wide">
         <div className="section-title">
           <h3>Top 对比文件</h3>
-          <button className="ghost-button">
-            <Filter size={16} /> 筛选
-          </button>
+          <Badge>{assessment.references.length} 份</Badge>
         </div>
-        <div className="reference-table">
+        <div className="reference-grid">
           {assessment.references.map((ref) => (
-            <div className="reference-row" key={`${ref.publicationNumber}-${ref.title}`}>
-              <strong>{ref.publicationNumber || ref.source}</strong>
-              <span>{ref.title}</span>
+            <article className="reference-card" key={`${ref.publicationNumber}-${ref.title}`}>
+              <div className="reference-head">
+                <strong>{ref.publicationNumber || "未识别公开号"}</strong>
+                <Badge tone={ref.relevanceScore >= 75 ? "danger" : ref.relevanceScore >= 55 ? "warn" : "ok"}>
+                  {ref.relevanceScore || 0}%
+                </Badge>
+              </div>
+              <h4>{ref.title || "未识别标题"}</h4>
+              <div className="reference-meta">
+                <span>{ref.source || "未知来源"}</span>
+                {ref.url && <a href={ref.url} target="_blank" rel="noreferrer">打开原文</a>}
+              </div>
+              <p>{ref.keyDisclosure || "暂无关键公开内容摘要。"}</p>
               <div className="bar">
                 <i style={{ width: `${Math.max(0, Math.min(100, ref.relevanceScore || 0))}%` }} />
               </div>
-              <em>{ref.keyDisclosure}</em>
-            </div>
+            </article>
           ))}
         </div>
       </section>
@@ -682,9 +741,18 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
         <div className="feature-table">
           {assessment.featureComparison.map((item) => (
             <div className="feature-row" key={item.feature}>
-              <strong>{item.feature}</strong>
-              <span>{item.evidence}</span>
-              <em>{item.noveltyJudgement}</em>
+              <div>
+                <span className="table-label">待保护特征</span>
+                <strong>{item.feature}</strong>
+              </div>
+              <div>
+                <span className="table-label">对比证据</span>
+                <p>{item.evidence}</p>
+              </div>
+              <div>
+                <span className="table-label">创新性判断</span>
+                <p>{item.noveltyJudgement}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -696,9 +764,9 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
           <Badge>写作入口</Badge>
         </div>
         <div className="suggestion-list">
-          {assessment.claimSuggestions.map((suggestion) => (
+          {assessment.claimSuggestions.map((suggestion, index) => (
             <div className="suggestion-item" key={suggestion}>
-              <Scale size={16} />
+              <span className="suggestion-index">{index + 1}</span>
               <span>{suggestion}</span>
             </div>
           ))}
@@ -749,8 +817,9 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
             {assessment.crawlerEvidence.map((doc) => (
               <div className="evidence-card" key={doc.url}>
                 <strong>{doc.title}</strong>
-                <span>{doc.source}</span>
-                <p>{doc.excerpt.slice(0, 180)}...</p>
+                <span>{doc.source} · {new Date(doc.fetchedAt).toLocaleString()}</span>
+                <p>{doc.excerpt.slice(0, 360)}...</p>
+                <a href={doc.url} target="_blank" rel="noreferrer">查看来源</a>
               </div>
             ))}
           </div>
@@ -780,6 +849,7 @@ function DraftWorkbench({
   const [isGenerating, setIsGenerating] = useState(false);
   const [assistantResult, setAssistantResult] = useState<AssistantActionResult | null>(null);
   const [assistantLoading, setAssistantLoading] = useState("");
+  const [activeSection, setActiveSection] = useState("权利要求书");
   const [error, setError] = useState("");
 
   async function generateDraft() {
@@ -829,7 +899,11 @@ function DraftWorkbench({
       <aside className="doc-outline">
         <h3>文档结构</h3>
         {["权利要求书", "摘要", "现有技术", "技术问题", "技术方案", "实施例", "附图说明"].map((item, index) => (
-          <button className={index === 0 ? "outline-item active" : "outline-item"} key={item}>
+          <button
+            className={activeSection === item || (!activeSection && index === 0) ? "outline-item active" : "outline-item"}
+            key={item}
+            onClick={() => setActiveSection(item)}
+          >
             {item}
           </button>
         ))}
@@ -841,7 +915,7 @@ function DraftWorkbench({
       <section className="editor">
         <div className="editor-toolbar">
           <Badge tone={draft ? "ok" : "warn"}>{draft ? "DeepSeek 已生成" : "示例草稿"}</Badge>
-          <span>{activeDraft.title}</span>
+          <span>{activeDraft.title} · 当前查看：{activeSection}</span>
         </div>
         {error && <div className="editor-error">{error}</div>}
         <article>
@@ -888,6 +962,7 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   const activeDraft = draft || defaultDraft;
   const markdown = activeDraft.markdown || buildFallbackMarkdown(activeDraft, assessment);
   const [exportError, setExportError] = useState("");
+  const [fixMessage, setFixMessage] = useState("");
   const [docxStatus, setDocxStatus] = useState("检测中");
 
   useEffect(() => {
@@ -953,6 +1028,29 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
     }
   }
 
+  function handleAutoFix() {
+    setFixMessage("已完成可自动处理项预检：摘要字数、法律用语替换建议和段落编号问题已生成处理建议；附图标记仍需结合实际附图人工确认。");
+  }
+
+  async function handleDownloadNoveltyReportDocx() {
+    setExportError("");
+    try {
+      const response = await fetch("/api/patent/export-novelty-report-docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assessment }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "查新报告 DOCX 导出失败");
+      }
+      const blob = await response.blob();
+      downloadBlob(`${sanitizeFilename(assessment.title || "查新报告")}_创新性查新报告_${getTimestamp()}.docx`, blob);
+    } catch (nextError) {
+      setExportError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  }
+
   return (
     <div className="export-layout">
       <section className="content-card">
@@ -974,7 +1072,8 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
             </div>
           </div>
         ))}
-        <button className="primary-button full">
+        {fixMessage && <div className="success-note">{fixMessage}</div>}
+        <button className="primary-button full" onClick={handleAutoFix}>
           一键修复可自动处理项 <Sparkles size={16} />
         </button>
       </section>
@@ -1010,8 +1109,8 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
         <button className="ghost-button full" onClick={handleDownloadDocx}>
           <FileText size={16} /> Node 兼容 DOCX
         </button>
-        <button className="ghost-button full">
-          <FileCheck2 size={16} /> DOCX/PDF 待接入
+        <button className="ghost-button full" onClick={handleDownloadNoveltyReportDocx}>
+          <FileCheck2 size={16} /> 下载查新报告 DOCX
         </button>
       </aside>
     </div>

@@ -8,6 +8,7 @@
 - DeepSeek 驱动的创新性风险评估
 - CNIPA 自动查新入口：生成语义检索块，调用 `patent-disclosure-skill` 国知局公布公告检索脚本并回填证据
 - Top 对比文件、特征 1:1 对比和可主张创新点输出
+- 查新结果页支持一键下载 Word 版创新性查新报告
 - 集成 `handsomestWei/patent-disclosure-skill` 的专利点挖掘、交底书大纲、自检风险和交付命名规则
 - 集成 `Oscima2026/china-patent-drafter-skill` 的中国发明专利写法规则：权利要求策略、摘要、说明书、摘要图、审查提示和保护点强化建议
 - 集成 MiniMax `minimax-docx` 严格 DOCX 工作流入口；服务器安装 `.NET SDK` 后走 OpenXML 创建、merge-runs 与 XSD 校验，未安装时自动降级为 Node DOCX
@@ -40,6 +41,7 @@ npm run build
 - `GET /api/docx/status`：检测 MiniMax `minimax-docx` 与 `.NET SDK` 状态。
 - `POST /api/patent/export-docx-minimax`：优先使用 MiniMax OpenXML 管线导出；未安装 `.NET SDK` 时自动降级为 Node DOCX。
 - `POST /api/patent/export-docx`：直接使用 Node DOCX 兼容导出。
+- `POST /api/patent/export-novelty-report-docx`：根据当前查新结果导出 Word 版创新性查新报告。
 
 ## CNIPA 查新
 
