@@ -1,3 +1,13 @@
+---
+title: PatentDraft
+emoji: 🧾
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # PatentDraft 专利起草专家
 
 面向课题组多人使用的中国专利写作网站，覆盖技术交底书解析、创新性查新、对比文件证据抓取、权利要求撰写建议、格式审查与导出预览。
@@ -29,6 +39,25 @@
    npm run dev
    ```
 4. 打开 `http://localhost:3000`。
+
+## Hugging Face Spaces 部署
+
+本项目按 Docker Space 部署，线上端口为 `7860`。Docker 镜像会自动安装 Node、Python、Playwright Chromium，并拉取 `handsomestWei/patent-disclosure-skill` 用于 CNIPA 查新脚本。
+
+部署前在 Hugging Face Space 的 Settings -> Variables and secrets 中添加：
+
+- `DEEPSEEK_API_KEY`：必填，作为 Secret 保存。
+- `DEEPSEEK_BASE_URL`：可选，默认使用 DeepSeek OpenAI 兼容接口。
+- `DEEPSEEK_MODEL`：可选，默认使用项目内配置。
+
+不要上传 `.env.local` 或任何真实 API Key。仓库已通过 `.gitignore` 与 `.dockerignore` 排除 `.env*`。
+
+使用 `hf` CLI 时可执行：
+
+```bash
+hf repos create <你的命名空间>/patentdraft --type space --space-sdk docker --private --exist-ok
+hf upload <你的命名空间>/patentdraft . --type space --exclude ".env*" --exclude "node_modules/*" --exclude "dist/*" --exclude ".git/*" --commit-message "Deploy PatentDraft Docker Space"
+```
 
 ## 校验
 
