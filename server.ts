@@ -9,6 +9,7 @@ import {
 } from "docx";
 import express from "express";
 import fs from "fs/promises";
+import JSZip from "jszip";
 import mammoth from "mammoth";
 import multer from "multer";
 import os from "os";
@@ -232,6 +233,46 @@ function normalizeImportedDisclosure(text: string) {
     .trim();
 }
 
+function decodeXmlEntities(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'");
+}
+
+async function extractDocxTextFromXml(buffer: Buffer) {
+  const zip = await JSZip.loadAsync(buffer);
+  const documentFiles = Object.keys(zip.files).filter((fileName) =>
+    /^word\/(document|header\d*|footer\d*)\.xml$/i.test(fileName),
+  );
+  const paragraphs: string[] = [];
+
+  for (const fileName of documentFiles) {
+    const file = zip.file(fileName);
+    if (!file) continue;
+    const xml = await file.async("string");
+    const paragraphXmlList = xml.split(/<\/w:p>/i);
+    for (const paragraphXml of paragraphXmlList) {
+      const textParts = Array.from(paragraphXml.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/gi)).map((match) =>
+        decodeXmlEntities(match[1]),
+      );
+      const paragraph = textParts.join("").trim();
+      if (paragraph) paragraphs.push(paragraph);
+    }
+  }
+
+  return normalizeImportedDisclosure(paragraphs.join("\n\n"));
+}
+
+function shouldUseXmlDocxFallback(text: string) {
+  const normalized = text.replace(/\s+/g, "");
+  if (normalized.length < 30) return true;
+  const unknownChars = (normalized.match(/\?/g) || []).length;
+  return normalized.length > 0 && unknownChars / normalized.length > 0.35;
+}
+
 function inferDisclosureTitle(text: string, originalName: string) {
   const lines = text
     .split(/\n+/)
@@ -449,6 +490,66 @@ function isPlaceholderSearchBlock(block: string) {
   return /语义块|泛词|关键词|示例|block|term|[\[\]]/i.test(block) || block.length < 2 || block.length > 18;
 }
 
+function normalizeSearchText(value: string) {
+  return value.replace(/\s+/g, "").replace(/[，,。.、；;：:（）()《》<>【】[\]“”"']/g, "");
+}
+
+function extractSearchAnchors(title: string, disclosure: string) {
+  const stopWords = new Set([
+    "一种",
+    "方法",
+    "系统",
+    "装置",
+    "包括",
+    "根据",
+    "以及",
+    "进行",
+    "输出",
+    "技术",
+    "方案",
+    "本方案",
+    "该方法",
+    "该系统",
+    "该装置",
+    "其特征在于",
+    "实施例",
+    "具体",
+    "可以",
+    "用于",
+  ]);
+  const source = `${title}。${disclosure}`;
+  const phrases = source
+    .split(/[；;，,。.、\n\r\t\s]+/)
+    .flatMap((item) => {
+      const compact = item
+        .trim()
+        .replace(/^(一种|本方案|该方法|该系统|该装置|其特征在于|其中)/, "")
+        .replace(/(的方法|的系统|的装置|方法|系统|装置)$/, "");
+      const matches = compact.match(/[\u4e00-\u9fa5A-Za-z0-9]{2,12}/g) || [];
+      return compact.length >= 2 && compact.length <= 12 ? [compact, ...matches] : matches;
+    })
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2 && item.length <= 12)
+    .filter((item) => !stopWords.has(item))
+    .filter((item) => !/^[0-9a-zA-Z]+$/.test(item));
+
+  const normalizedSource = normalizeSearchText(source);
+  return Array.from(new Set(phrases))
+    .filter((term) => normalizedSource.includes(normalizeSearchText(term)))
+    .slice(0, 24);
+}
+
+function isGroundedSearchBlock(block: string, title: string, disclosure: string, anchors: string[]) {
+  const normalizedBlock = normalizeSearchText(block);
+  const normalizedSource = normalizeSearchText(`${title}。${disclosure}`);
+  if (!normalizedBlock || isPlaceholderSearchBlock(block)) return false;
+  if (normalizedSource.includes(normalizedBlock)) return true;
+  return anchors.some((anchor) => {
+    const normalizedAnchor = normalizeSearchText(anchor);
+    return normalizedAnchor.length >= 2 && normalizedBlock.includes(normalizedAnchor) && normalizedSource.includes(normalizedAnchor);
+  });
+}
+
 function fallbackSearchBlocks(title: string, disclosure: string) {
   const stopWords = new Set([
     "一种",
@@ -483,22 +584,11 @@ function fallbackSearchBlocks(title: string, disclosure: string) {
     .filter((item) => !stopWords.has(item))
     .filter((item) => !/^[0-9a-zA-Z]+$/.test(item));
 
-  const joined = source.replace(/\s+/g, "");
-  const domainTerms = [
-    "异常事件强度",
-    "采样频率",
-    "多模态传感器",
-    "功耗预算",
-    "融合权重",
-    "边缘节点",
-    "边缘计算",
-    "动态调整",
-    "低功耗",
-    "传感器融合",
-  ].filter((term) => joined.includes(term));
+  const anchors = extractSearchAnchors(title, disclosure);
 
-  return Array.from(new Set([...domainTerms, ...candidates]))
+  return Array.from(new Set([...anchors, ...candidates]))
     .filter((block) => !isPlaceholderSearchBlock(block))
+    .filter((block) => isGroundedSearchBlock(block, title, disclosure, anchors))
     .slice(0, 8);
 }
 
@@ -814,13 +904,24 @@ app.post("/api/patent/import-disclosure", upload.single("document"), async (req,
     }
 
     const result = await mammoth.extractRawText({ buffer: file.buffer });
-    const importedText = normalizeImportedDisclosure(result.value);
+    let importedText = normalizeImportedDisclosure(result.value);
+    let parser = "mammoth";
+    if (shouldUseXmlDocxFallback(importedText)) {
+      const xmlText = await extractDocxTextFromXml(file.buffer);
+      if (xmlText.length > importedText.length) {
+        importedText = xmlText;
+        parser = "docx-xml";
+      }
+    }
     if (importedText.length < 30) {
-      return res.status(400).json({ error: "Word 文档正文过短，未识别到可用于查新和撰写的技术内容。" });
+      return res.status(400).json({
+        error: "Word 文档正文过短，未识别到可用于查新和撰写的技术内容。请确认正文不是图片扫描件，或先复制正文到 Word 普通段落后再上传。",
+      });
     }
 
     res.json({
       fileName: file.originalname,
+      parser,
       title: inferDisclosureTitle(importedText, file.originalname),
       inventionDisclosure: importedText.slice(0, 60_000),
       summary: summarizeImportedDisclosure(importedText),

@@ -81,6 +81,40 @@ const references = [
   { id: "CN113558240A", title: "一种工业设备状态监测系统", score: 54, hit: "应用场景接近" },
 ];
 
+const DEFAULT_API_TIMEOUT_MS = 60_000;
+
+async function parseApiJson(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+
+  const text = await response.text();
+  const normalized = text.trim();
+  if (normalized.startsWith("<!DOCTYPE") || normalized.startsWith("<html")) {
+    throw new Error("接口返回了 HTML 页面，通常是 Space 权限、路由或服务状态异常；请刷新页面后重试。");
+  }
+  throw new Error(normalized.slice(0, 240) || `接口返回了非 JSON 内容，HTTP ${response.status}`);
+}
+
+async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const data = await parseApiJson(response);
+    return { response, data };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("请求超过 60 秒仍未返回。请先压缩 Word、删除大图后重试，或稍后再试 HF 免费 CPU。");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 const defaultAssessment: NoveltyAssessment = {
   title: "多模态传感器的低功耗融合方法",
   riskScore: 42,
@@ -395,11 +429,10 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     try {
       const formData = new FormData();
       formData.append("document", file);
-      const response = await fetch("/api/patent/import-disclosure", {
+      const { response, data } = await fetchApiJson("/api/patent/import-disclosure", {
         method: "POST",
         body: formData,
       });
-      const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Word 文档解析失败");
 
       if (data.title) setTitle(data.title);
@@ -431,7 +464,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     setError("");
 
     try {
-      const response = await fetch("/api/patent/search-blocks", {
+      const { response, data } = await fetchApiJson("/api/patent/search-blocks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -440,7 +473,6 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
       });
-      const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "检索词生成失败");
       setSearchBlocks(Array.isArray(data.blocks) ? data.blocks : []);
     } catch (nextError) {
@@ -462,7 +494,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     try {
       let blocks = searchBlocks;
       if (blocks.length === 0) {
-        const blockResponse = await fetch("/api/patent/search-blocks", {
+        const { response: blockResponse, data: blockData } = await fetchApiJson("/api/patent/search-blocks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -471,7 +503,6 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             dateRange: formatDateRange(searchStartDate, searchEndDate),
           }),
         });
-        const blockData = await blockResponse.json();
         if (!blockResponse.ok) throw new Error(blockData?.error || "检索词生成失败");
         blocks = Array.isArray(blockData.blocks) ? blockData.blocks : [];
         setSearchBlocks(blocks);
@@ -479,15 +510,14 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 
       if (blocks.length === 0) throw new Error("未能生成可用的国知局检索词");
 
-      const response = await fetch("/api/patent/cnipa-search", {
+      const { response, data } = await fetchApiJson("/api/patent/cnipa-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           blocks,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
-      });
-      const data = await response.json();
+      }, 90_000);
       if (!response.ok) {
         setCnipaResult(data);
         throw new Error(data?.hint || data?.error || "国知局查新失败");
@@ -520,7 +550,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     setError("");
 
     try {
-      const response = await fetch("/api/patent/novelty-assessment", {
+      const { response, data } = await fetchApiJson("/api/patent/novelty-assessment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -533,9 +563,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             .filter(Boolean),
           manualEvidence,
         }),
-      });
-
-      const data = await response.json();
+      }, 90_000);
       if (!response.ok) {
         throw new Error(data?.error || "创新性评估失败");
       }
@@ -567,13 +595,13 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         <div className="upload-zone">
           <UploadCloud size={42} />
           <strong>上传 Word 交底书/专利草稿，自动生成查新输入</strong>
-          <p>课题组成员直接上传 .docx，系统先按 patent-disclosure-skill 提取技术方案，再交给 china-patent-drafter 流程生成查新、撰写和 Word 报告。</p>
+          <p>课题组成员上传 .docx 后，系统先提取标题和技术方案并填入下方表单；确认内容后再运行国知局查新或生成创新性评估。</p>
           <div className="upload-actions">
             <label className="file-upload-button">
               <input accept=".docx" disabled={isImportingDisclosure} onChange={handleDisclosureFileUpload} type="file" />
               {isImportingDisclosure ? "正在解析 Word..." : "选择 Word 文档"}
             </label>
-            <span>支持 .docx；旧版 .doc 请先另存为 .docx</span>
+            <span>{isImportingDisclosure ? "大文件或含大量图片时可能需要 10-60 秒" : "支持 .docx；旧版 .doc 请先另存为 .docx"}</span>
           </div>
           {importedDisclosure && (
             <div className="import-summary">
