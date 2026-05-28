@@ -82,6 +82,7 @@ const references = [
 ];
 
 const DEFAULT_API_TIMEOUT_MS = 60_000;
+const HF_SPACE_ORIGIN = "https://jianf123-patentdraft.hf.space";
 
 async function parseApiJson(response: Response) {
   const contentType = response.headers.get("content-type") || "";
@@ -92,9 +93,16 @@ async function parseApiJson(response: Response) {
   const text = await response.text();
   const normalized = text.trim();
   if (normalized.startsWith("<!DOCTYPE") || normalized.startsWith("<html")) {
-    throw new Error("接口返回了 HTML 页面，通常是 Space 权限、路由或服务状态异常；请刷新页面后重试。");
+    throw new Error(`接口返回了 HTML 页面，HTTP ${response.status}；请求可能打到了 Hugging Face 外层页面。`);
   }
   throw new Error(normalized.slice(0, 240) || `接口返回了非 JSON 内容，HTTP ${response.status}`);
+}
+
+function getAbsoluteApiInput(input: RequestInfo | URL) {
+  if (typeof input === "string" && input.startsWith("/api/")) {
+    return `${HF_SPACE_ORIGIN}${input}`;
+  }
+  return input;
 }
 
 async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS) {
@@ -102,8 +110,21 @@ async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeou
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(input, { ...init, signal: controller.signal });
-    const data = await parseApiJson(response);
+    let response = await fetch(input, { ...init, signal: controller.signal });
+    let data;
+    try {
+      data = await parseApiJson(response);
+    } catch (error) {
+      const shouldRetryAbsolute =
+        error instanceof Error &&
+        error.message.includes("HTML 页面") &&
+        typeof input === "string" &&
+        input.startsWith("/api/") &&
+        window.location.origin !== HF_SPACE_ORIGIN;
+      if (!shouldRetryAbsolute) throw error;
+      response = await fetch(getAbsoluteApiInput(input), { ...init, signal: controller.signal });
+      data = await parseApiJson(response);
+    }
     return { response, data };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
