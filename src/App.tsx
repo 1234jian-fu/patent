@@ -763,7 +763,7 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
     setReportError("");
 
     try {
-      const response = await fetch("/api/patent/export-novelty-report-docx", {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-novelty-report-docx"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment }),
@@ -991,12 +991,11 @@ function DraftWorkbench({
     setError("");
 
     try {
-      const response = await fetch("/api/patent/draft-disclosure", {
+      const { response, data } = await fetchApiJson("/api/patent/draft-disclosure", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment, inventionDisclosure: source.inventionDisclosure }),
       });
-      const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "交底书生成失败");
       onDraft(data);
       setActiveSection("claims");
@@ -1012,7 +1011,7 @@ function DraftWorkbench({
     setError("");
 
     try {
-      const response = await fetch("/api/patent/assistant-action", {
+      const { response, data } = await fetchApiJson("/api/patent/assistant-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1023,7 +1022,6 @@ function DraftWorkbench({
           currentSection: currentSection?.label || "未选择章节",
         }),
       });
-      const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "AI 助手动作失败");
       setAssistantResult(data);
     } catch (nextError) {
@@ -1309,7 +1307,7 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/docx/status")
+    fetch(getAbsoluteApiInput("/api/docx/status"))
       .then((response) => response.json())
       .then((data) => {
         if (cancelled) return;
@@ -1331,7 +1329,7 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   async function handleDownloadDocx() {
     setExportError("");
     try {
-      const response = await fetch("/api/patent/export-docx", {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-docx"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ draft: activeDraft }),
@@ -1350,7 +1348,7 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   async function handleDownloadMiniMaxDocx() {
     setExportError("");
     try {
-      const response = await fetch("/api/patent/export-docx-minimax", {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-docx-minimax"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ draft: activeDraft, fallback: true }),
@@ -1377,7 +1375,7 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   async function handleDownloadNoveltyReportDocx() {
     setExportError("");
     try {
-      const response = await fetch("/api/patent/export-novelty-report-docx", {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-novelty-report-docx"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment }),

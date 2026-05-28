@@ -41,10 +41,11 @@ const MINIMAX_DOCX_XSD = path.join(MINIMAX_DOCX_DIR, "assets", "xsd", "wml-subse
 const PATENT_DISCLOSURE_SKILL_DIR =
   process.env.PATENT_DISCLOSURE_SKILL_DIR || path.join(process.cwd(), "..", "patent-disclosure-skill");
 const CNIPA_SEARCH_SCRIPT = path.join(PATENT_DISCLOSURE_SKILL_DIR, "tools", "cnipa_epub_search.py");
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 12 * 1024 * 1024,
+    fileSize: MAX_UPLOAD_BYTES,
   },
 });
 
@@ -122,6 +123,37 @@ interface NoveltyReportRequest {
   crawlerEvidence?: CrawledPatentDocument[];
   disclosureOutline?: Record<string, string | string[]>;
   selfCheckRisks?: string[];
+}
+
+function sendApiError(res: express.Response, status: number, error: unknown, fallbackMessage = "服务器处理失败") {
+  res.status(status).json({
+    error: error instanceof Error ? error.message : String(error || fallbackMessage),
+  });
+}
+
+function handleUploadSingle(fieldName: string) {
+  const middleware = upload.single(fieldName);
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    middleware(req, res, (error) => {
+      if (!error) {
+        next();
+        return;
+      }
+
+      if (error instanceof multer.MulterError) {
+        if (error.code === "LIMIT_FILE_SIZE") {
+          res.status(413).json({
+            error: `Word 文件超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB。请删除大图、压缩图片，或只保留正文后再上传。`,
+          });
+          return;
+        }
+        res.status(400).json({ error: `上传失败：${error.message}` });
+        return;
+      }
+
+      sendApiError(res, 400, error, "上传失败");
+    });
+  };
 }
 
 function parseJsonObject(content: string) {
@@ -891,7 +923,7 @@ app.get("/api/cnipa/status", async (_req, res) => {
   }
 });
 
-app.post("/api/patent/import-disclosure", upload.single("document"), async (req, res) => {
+app.post("/api/patent/import-disclosure", handleUploadSingle("document"), async (req, res) => {
   try {
     const file = req.file;
     if (!file) {
@@ -1391,6 +1423,18 @@ app.post("/api/patent/export-docx-minimax", async (req, res) => {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+});
+
+app.use("/api", (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const err = error as { type?: string; status?: number; message?: string };
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    res.status(413).json({
+      error: "请求内容过大。请减少粘贴文本、删除 Word 大图或分段处理后重试。",
+    });
+    return;
+  }
+
+  sendApiError(res, Number(err?.status) || 500, error, "接口处理失败");
 });
 
 async function configureApp() {
