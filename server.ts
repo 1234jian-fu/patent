@@ -9,6 +9,8 @@ import {
 } from "docx";
 import express from "express";
 import fs from "fs/promises";
+import mammoth from "mammoth";
+import multer from "multer";
 import os from "os";
 import path from "path";
 import { promisify } from "util";
@@ -38,6 +40,12 @@ const MINIMAX_DOCX_XSD = path.join(MINIMAX_DOCX_DIR, "assets", "xsd", "wml-subse
 const PATENT_DISCLOSURE_SKILL_DIR =
   process.env.PATENT_DISCLOSURE_SKILL_DIR || path.join(process.cwd(), "..", "patent-disclosure-skill");
 const CNIPA_SEARCH_SCRIPT = path.join(PATENT_DISCLOSURE_SKILL_DIR, "tools", "cnipa_epub_search.py");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 12 * 1024 * 1024,
+  },
+});
 
 const CHINA_PATENT_DRAFTER_RULES = `
 china-patent-drafter 真实 Skill 写法规则：
@@ -214,6 +222,37 @@ function sendDocx(res: express.Response, draft: DisclosureDraftRequest, buffer: 
 
 function sanitizeFilename(filename: string) {
   return filename.replace(/[\\/:*?"<>|\r\n]/g, "").trim().slice(0, 70) || "PatentDraft";
+}
+
+function normalizeImportedDisclosure(text: string) {
+  return text
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function inferDisclosureTitle(text: string, originalName: string) {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 4 && line.length <= 80);
+  const titleLine = lines.find((line) => /^(发明名称|名称|题目|专利名称)[:：]/.test(line));
+  if (titleLine) {
+    return titleLine.replace(/^(发明名称|名称|题目|专利名称)[:：]\s*/, "").trim();
+  }
+  const candidate = lines.find((line) => /一种|方法|系统|装置|设备|介质|平台/.test(line));
+  if (candidate) return candidate.replace(/^#+\s*/, "");
+  return path.basename(originalName, path.extname(originalName)).replace(/[_-]+/g, " ").trim() || "未命名中国专利请求";
+}
+
+function summarizeImportedDisclosure(text: string) {
+  const headings = text.match(/^(#{1,3}\s*)?([一二三四五六七八九十]+[、.．]|第[一二三四五六七八九十]+[章节]|[0-9]+[.．])?[^\n]{2,40}$/gm) || [];
+  return {
+    charCount: text.length,
+    paragraphCount: text.split(/\n{2,}/).filter(Boolean).length,
+    headings: headings.slice(0, 8).map((heading) => heading.replace(/^#+\s*/, "").trim()),
+  };
 }
 
 function textValue(value: unknown, fallback = "未提供") {
@@ -755,6 +794,42 @@ app.get("/api/docx/status", async (_req, res) => {
 app.get("/api/cnipa/status", async (_req, res) => {
   try {
     res.json(await getCnipaSearchStatus());
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/import-disclosure", upload.single("document"), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: "Missing Word document." });
+    }
+
+    const extension = path.extname(file.originalname).toLowerCase();
+    if (extension !== ".docx") {
+      return res.status(400).json({ error: "当前仅支持 .docx Word 文档；旧版 .doc 请先另存为 .docx。" });
+    }
+
+    const result = await mammoth.extractRawText({ buffer: file.buffer });
+    const importedText = normalizeImportedDisclosure(result.value);
+    if (importedText.length < 30) {
+      return res.status(400).json({ error: "Word 文档正文过短，未识别到可用于查新和撰写的技术内容。" });
+    }
+
+    res.json({
+      fileName: file.originalname,
+      title: inferDisclosureTitle(importedText, file.originalname),
+      inventionDisclosure: importedText.slice(0, 60_000),
+      summary: summarizeImportedDisclosure(importedText),
+      warnings: result.messages.map((message) => message.message).filter(Boolean),
+      skillPipeline: [
+        "patent-disclosure-skill：解析交底书/专利草稿，提取技术问题、方案、效果和可查新文本",
+        "china-patent-drafter：后续生成中国发明专利权利要求、摘要、说明书和 DOCX",
+      ],
+    });
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),

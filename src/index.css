@@ -534,6 +534,69 @@ button:disabled {
   color: var(--muted);
 }
 
+.upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.upload-actions span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.file-upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 6px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.file-upload-button input {
+  display: none;
+}
+
+.import-summary {
+  display: grid;
+  gap: 4px;
+  max-width: 680px;
+  margin: 16px auto 0;
+  padding: 12px 14px;
+  border: 1px solid #b9dfcc;
+  border-radius: 8px;
+  background: #eefbf5;
+  text-align: left;
+}
+
+.import-summary strong,
+.import-summary span,
+.import-summary em {
+  display: block;
+}
+
+.import-summary strong {
+  color: var(--success);
+}
+
+.import-summary span,
+.import-summary em {
+  color: #306b52;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

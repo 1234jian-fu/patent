@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -185,6 +185,14 @@ interface CnipaSearchResult {
   hint?: string;
 }
 
+interface ImportedDisclosureSummary {
+  fileName: string;
+  charCount: number;
+  paragraphCount: number;
+  headings: string[];
+  warnings?: string[];
+}
+
 function formatDateRange(startDate: string, endDate: string) {
   if (!startDate && !endDate) return "未限定";
   return `${startDate || "不限"} 至 ${endDate || "今"}`;
@@ -369,11 +377,49 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [patentUrls, setPatentUrls] = useState("");
   const [manualEvidence, setManualEvidence] = useState("");
   const [isAssessing, setIsAssessing] = useState(false);
+  const [isImportingDisclosure, setIsImportingDisclosure] = useState(false);
   const [isGeneratingBlocks, setIsGeneratingBlocks] = useState(false);
   const [isSearchingCnipa, setIsSearchingCnipa] = useState(false);
   const [searchBlocks, setSearchBlocks] = useState<string[]>([]);
   const [cnipaResult, setCnipaResult] = useState<CnipaSearchResult | null>(null);
+  const [importedDisclosure, setImportedDisclosure] = useState<ImportedDisclosureSummary | null>(null);
   const [error, setError] = useState("");
+
+  async function handleDisclosureFileUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsImportingDisclosure(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("document", file);
+      const response = await fetch("/api/patent/import-disclosure", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Word 文档解析失败");
+
+      if (data.title) setTitle(data.title);
+      if (data.inventionDisclosure) setInventionDisclosure(data.inventionDisclosure);
+      setImportedDisclosure({
+        fileName: data.fileName || file.name,
+        charCount: data.summary?.charCount || String(data.inventionDisclosure || "").length,
+        paragraphCount: data.summary?.paragraphCount || 0,
+        headings: Array.isArray(data.summary?.headings) ? data.summary.headings : [],
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+      });
+      setSearchBlocks([]);
+      setCnipaResult(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setIsImportingDisclosure(false);
+      event.target.value = "";
+    }
+  }
 
   async function generateSearchBlocks() {
     if (isInvalidDateRange(searchStartDate, searchEndDate)) {
@@ -520,8 +566,23 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 
         <div className="upload-zone">
           <UploadCloud size={42} />
-          <strong>中国专利请求与对比文件证据</strong>
-          <p>给课题组成员使用：输入待申请技术方案，并粘贴中国专利公布公告、Google Patents、EPO、WIPO 等对比文件链接，系统抓取正文后输出创新性判断和撰写入口。</p>
+          <strong>上传 Word 交底书/专利草稿，自动生成查新输入</strong>
+          <p>课题组成员直接上传 .docx，系统先按 patent-disclosure-skill 提取技术方案，再交给 china-patent-drafter 流程生成查新、撰写和 Word 报告。</p>
+          <div className="upload-actions">
+            <label className="file-upload-button">
+              <input accept=".docx" disabled={isImportingDisclosure} onChange={handleDisclosureFileUpload} type="file" />
+              {isImportingDisclosure ? "正在解析 Word..." : "选择 Word 文档"}
+            </label>
+            <span>支持 .docx；旧版 .doc 请先另存为 .docx</span>
+          </div>
+          {importedDisclosure && (
+            <div className="import-summary">
+              <strong>{importedDisclosure.fileName}</strong>
+              <span>{importedDisclosure.charCount} 字 · {importedDisclosure.paragraphCount} 段 · 已自动填入标题和技术方案</span>
+              {importedDisclosure.headings.length > 0 && <em>识别章节：{importedDisclosure.headings.slice(0, 4).join(" / ")}</em>}
+              {importedDisclosure.warnings && importedDisclosure.warnings.length > 0 && <em>解析提示：{importedDisclosure.warnings[0]}</em>}
+            </div>
+          )}
         </div>
 
         <div className="form-grid">

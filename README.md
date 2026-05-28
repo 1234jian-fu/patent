@@ -5,6 +5,7 @@
 ## 核心能力
 
 - 中国专利请求输入与对比文件 URL 抓取
+- Word `.docx` 交底书/专利草稿上传解析，自动填入待申请技术方案
 - DeepSeek 驱动的创新性风险评估
 - CNIPA 自动查新入口：生成语义检索块，调用 `patent-disclosure-skill` 国知局公布公告检索脚本并回填证据
 - Top 对比文件、特征 1:1 对比和可主张创新点输出
@@ -45,6 +46,7 @@ npm run build
 
 ## CNIPA 查新
 
+- `POST /api/patent/import-disclosure`：上传课题组 Word `.docx` 交底书/专利草稿，解析正文、推断标题并填入查新输入。
 - `POST /api/patent/search-blocks`：根据技术方案生成 2-8 个国知局检索语义块。
 - `POST /api/patent/cnipa-search`：按语义块分轮调用 `patent-disclosure-skill/tools/cnipa_epub_search.py`，并按公开号/链接合并结果。
 - `GET /api/cnipa/status`：检测 Python 与检索脚本是否就绪。若未安装 Playwright 或依赖，前端会显示失败原因，仍可使用人工证据或对比文件 URL 继续评估。
