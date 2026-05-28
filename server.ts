@@ -1,4 +1,11 @@
 import dotenv from "dotenv";
+import {
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  TextRun,
+} from "docx";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -34,6 +41,77 @@ interface CrawledPatentDocument {
   title: string;
   excerpt: string;
   fetchedAt: string;
+}
+
+interface DisclosureDraftRequest {
+  title?: string;
+  abstractText?: string;
+  claims?: string[];
+  descriptionSections?: Array<{ heading: string; content: string }>;
+  mermaidSystemDiagram?: string;
+  mermaidFlow?: string;
+}
+
+function parseJsonObject(content: string) {
+  const cleaned = content
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  return JSON.parse(cleaned);
+}
+
+function createDocxParagraphs(draft: DisclosureDraftRequest) {
+  const paragraphs: Paragraph[] = [
+    new Paragraph({
+      text: "技术交底书",
+      heading: HeadingLevel.TITLE,
+      spacing: { after: 360 },
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: `案件名称：${draft.title || "未命名中国专利请求"}`, bold: true })],
+      spacing: { after: 240 },
+    }),
+    new Paragraph({ text: "注意事项", heading: HeadingLevel.HEADING_1 }),
+    new Paragraph("（1）交底书应使代理人能看懂，尤其是背景技术和详细技术方案应完整、清楚。"),
+    new Paragraph("（2）技术公开程度应以本领域普通技术人员能够实施为准。"),
+    new Paragraph({ text: "权利要求书草稿", heading: HeadingLevel.HEADING_1 }),
+    ...(draft.claims || []).map((claim) => new Paragraph({ text: claim, spacing: { after: 160 } })),
+    new Paragraph({ text: "说明书摘要", heading: HeadingLevel.HEADING_1 }),
+    new Paragraph({ text: draft.abstractText || "", spacing: { after: 240 } }),
+  ];
+
+  for (const section of draft.descriptionSections || []) {
+    paragraphs.push(new Paragraph({ text: section.heading, heading: HeadingLevel.HEADING_1 }));
+    paragraphs.push(new Paragraph({ text: section.content, spacing: { after: 220 } }));
+  }
+
+  if (draft.mermaidSystemDiagram) {
+    paragraphs.push(new Paragraph({ text: "系统框图 Mermaid 源码", heading: HeadingLevel.HEADING_1 }));
+    paragraphs.push(new Paragraph(draft.mermaidSystemDiagram));
+  }
+
+  if (draft.mermaidFlow) {
+    paragraphs.push(new Paragraph({ text: "流程图 Mermaid 源码", heading: HeadingLevel.HEADING_1 }));
+    paragraphs.push(new Paragraph(draft.mermaidFlow));
+  }
+
+  return paragraphs;
+}
+
+function sanitizeFilename(filename: string) {
+  return filename.replace(/[\\/:*?"<>|\r\n]/g, "").trim().slice(0, 70) || "PatentDraft";
+}
+
+function validateDraftDomain(draft: Record<string, unknown>, sourceText: string) {
+  const serialized = JSON.stringify(draft);
+  const bannedExamples = ["图像去噪", "U-Net", "深度学习网络"];
+  const sourceAllowsTerm = (term: string) => sourceText.includes(term);
+  const unrelatedTerms = bannedExamples.filter((term) => serialized.includes(term) && !sourceAllowsTerm(term));
+  if (unrelatedTerms.length > 0) {
+    throw new Error(`Draft appears unrelated to the input technology: ${unrelatedTerms.join(", ")}`);
+  }
 }
 
 app.use(express.json({ limit: "15mb" }));
@@ -225,7 +303,7 @@ ${userContent}`,
       ],
     });
 
-    res.json(JSON.parse(content));
+    res.json(parseJsonObject(content));
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),
@@ -315,9 +393,151 @@ ${evidenceText || "暂无外部网页证据；请基于待申请技术方案给�
     });
 
     res.json({
-      ...JSON.parse(content),
+      title: title || "未命名中国专利请求",
+      ...parseJsonObject(content),
       crawlerEvidence,
     });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/draft-disclosure", async (req, res) => {
+  try {
+    const { assessment, inventionDisclosure } = req.body;
+    const content = await callDeepSeek({
+      responseFormatJson: true,
+      temperature: 0.2,
+      maxTokens: 5000,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是中国专利技术交底书撰写专家。遵循 patent-disclosure-skill 的 Step 7 模板，但输出 JSON。必须严格围绕用户给定的查新评估和技术材料撰写，禁止切换到无关技术领域，禁止输出示例案件，禁止编造不存在的对比文件、实验数据、参数或效果。正文不得写自检清单。",
+        },
+        {
+          role: "user",
+          content: `请根据查新结论生成一版可编辑的中国发明专利技术交底书草稿。
+
+硬性规则：
+- title 必须使用查新评估中的案件名称或用户技术材料中的主题，不得改写成无关领域。
+- claims、abstractText、descriptionSections 必须围绕查新评估中的 noveltyPoints、claimSuggestions 和用户补充技术材料。
+- 不允许出现与输入无关的“图像去噪、U-Net、深度学习网络”等示例技术，除非输入材料明确包含这些内容。
+- 若材料不足，写“需补充”，不要编造。
+
+输出 JSON 字段：
+- title: 案件名称
+- abstractText: 说明书摘要，200-300 字
+- claims: 5-8 条权利要求草稿，第一条为独立权利要求
+- descriptionSections: 数组，每项含 heading、content，按以下章节：注意事项、一、现有技术及缺点、二、技术问题、三、技术方案详细阐述、四、有益效果、五、技术关键点和欲保护点、六、实施例
+- mermaidSystemDiagram: mermaid flowchart 源码，只给系统框图
+- mermaidFlow: mermaid flowchart 源码，只给流程图
+- formatIssues: 需要用户补材料或格式修正的问题
+- markdown: 完整 Markdown 交底书，包含上述章节、mermaid 围栏、权利要求草稿；文件名建议使用“案件名_YYYYMMDDHHmmss”
+
+查新评估 JSON：
+${JSON.stringify(assessment || {}, null, 2)}
+
+用户补充技术材料：
+${String(inventionDisclosure || "").slice(0, 12000)}`,
+        },
+      ],
+    });
+
+    const draft = parseJsonObject(content);
+    validateDraftDomain(draft, `${JSON.stringify(assessment || {})}\n${String(inventionDisclosure || "")}`);
+    res.json(draft);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/assistant-action", async (req, res) => {
+  try {
+    const { action, assessment, draft } = req.body;
+    const actionName = String(action || "说明书反向扩写");
+    const content = await callDeepSeek({
+      responseFormatJson: true,
+      temperature: 0.2,
+      maxTokens: 2600,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是专利代理人助手。只基于给定查新结论和草稿行动，不编造证据。输出 JSON，不输出 Markdown 围栏。",
+        },
+        {
+          role: "user",
+          content: `请执行 AI 助手动作：${actionName}
+
+输出 JSON 字段：
+- title: 本次动作标题
+- content: 可直接放入工作台的建议或改写文本
+- risks: 数组，列出仍需人工确认的问题
+
+查新结论：
+${JSON.stringify(assessment || {}, null, 2)}
+
+当前草稿：
+${JSON.stringify(draft || {}, null, 2)}`,
+        },
+      ],
+    });
+
+    res.json(parseJsonObject(content));
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.post("/api/patent/export-docx", async (req, res) => {
+  try {
+    const draft: DisclosureDraftRequest = req.body?.draft || {};
+    const doc = new Document({
+      creator: "PatentDraft",
+      title: draft.title || "技术交底书",
+      description: "PatentDraft generated patent disclosure document",
+      sections: [
+        {
+          properties: {
+            page: {
+              margin: {
+                top: 1440,
+                right: 1440,
+                bottom: 1440,
+                left: 1440,
+              },
+            },
+          },
+          children: createDocxParagraphs(draft),
+        },
+      ],
+      styles: {
+        default: {
+          document: {
+            run: {
+              font: "Microsoft YaHei",
+              size: 21,
+            },
+            paragraph: {
+              spacing: { line: 360 },
+            },
+          },
+        },
+      },
+    });
+
+    const buffer = await Packer.toBuffer(doc);
+    const filename = encodeURIComponent(`${sanitizeFilename(draft.title || "技术交底书")}.docx`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+    res.send(buffer);
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),

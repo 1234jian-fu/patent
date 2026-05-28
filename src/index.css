@@ -855,6 +855,10 @@ textarea {
   font-weight: 700;
 }
 
+.draft-generate {
+  margin-top: 14px;
+}
+
 .editor {
   display: flex;
   min-width: 0;
@@ -871,6 +875,16 @@ textarea {
   font-size: 13px;
 }
 
+.editor-error {
+  margin: 12px 18px 0;
+  padding: 10px 12px;
+  border: 1px solid #f2b8b5;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+}
+
 .editor article {
   max-width: 760px;
   width: 100%;
@@ -882,6 +896,16 @@ textarea {
 .editor article h2 {
   text-align: center;
   margin-top: 0;
+}
+
+.draft-section {
+  margin-top: 28px;
+}
+
+.draft-section h3 {
+  margin: 0 0 8px;
+  color: var(--primary);
+  font-size: 17px;
 }
 
 .skill-action {
@@ -907,6 +931,28 @@ textarea {
   color: var(--warn);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.assistant-result {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #c8d7ed;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.assistant-result strong {
+  color: var(--primary);
+}
+
+.assistant-result p,
+.assistant-result span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .export-layout {

@@ -26,7 +26,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import type { AppTab, PatentProject } from "./types";
-import type { NoveltyAssessment } from "./types";
+import type { AssistantActionResult, DisclosureDraft, NoveltyAssessment } from "./types";
 
 const navItems: Array<{ id: AppTab; label: string; icon: typeof LayoutDashboard }> = [
   { id: "dashboard", label: "工作台", icon: LayoutDashboard },
@@ -82,6 +82,7 @@ const references = [
 ];
 
 const defaultAssessment: NoveltyAssessment = {
+  title: "多模态传感器的低功耗融合方法",
   riskScore: 42,
   conclusion: "中低风险，可进入权利要求设计。主要差异点集中在事件触发采样与融合权重联动更新的组合关系。",
   noveltyPoints: [
@@ -124,6 +125,25 @@ const defaultAssessment: NoveltyAssessment = {
   selfCheckRisks: ["异常事件强度需定义计算方式。", "功耗预算阈值需要给出参数范围或示例。"],
 };
 
+const defaultDraft: DisclosureDraft = {
+  title: "多模态传感器的低功耗融合方法",
+  abstractText:
+    "本发明公开了一种多模态传感器的低功耗融合方法，通过异常事件强度驱动采样频率调整，并在边缘计算节点中结合功耗预算更新融合权重，从而在长期部署场景下兼顾检测稳定性与能耗控制。",
+  claims: [
+    "1. 一种多模态传感器的低功耗融合方法，其特征在于，包括：获取至少两类传感器的候选采样信号；基于异常事件强度确定采样频率调整系数；在边缘计算节点中根据功耗预算约束更新融合权重；输出融合后的设备状态判定结果。",
+    "2. 根据权利要求1所述的方法，其中所述采样频率调整系数由环境变化率和历史误报率共同确定。",
+  ],
+  descriptionSections: [
+    { heading: "一、现有技术及缺点", content: "现有多传感器融合节点通常采用固定周期采样，长期部署时容易产生冗余采集和通信功耗。" },
+    { heading: "二、技术问题", content: "需要在保证异常事件识别准确性的同时降低多模态传感器节点的持续运行功耗。" },
+    { heading: "三、技术方案详细阐述", content: "通过异常事件强度调整采样频率，并将功耗预算作为边缘侧融合权重更新的约束条件。" },
+  ],
+  mermaidSystemDiagram: "flowchart LR\n  A[多模态传感器] --> B[事件强度评估]\n  B --> C[采样频率控制]\n  C --> D[边缘融合节点]\n  D --> E[状态判定输出]",
+  mermaidFlow: "flowchart TD\n  S[开始] --> A[采集候选信号]\n  A --> B[计算异常事件强度]\n  B --> C[调整采样频率]\n  C --> D[更新融合权重]\n  D --> E[输出判定结果]",
+  formatIssues: ["需要补充异常事件强度的计算公式或判定规则。"],
+  markdown: "",
+};
+
 const disclosurePipeline = [
   "项目扫描",
   "专利点挖掘",
@@ -137,6 +157,7 @@ const disclosurePipeline = [
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const [assessment, setAssessment] = useState<NoveltyAssessment>(defaultAssessment);
+  const [draft, setDraft] = useState<DisclosureDraft | null>(defaultDraft);
   const activeTitle = navItems.find((item) => item.id === activeTab)?.label ?? "工作台";
 
   return (
@@ -195,13 +216,14 @@ export default function App() {
           <NoveltySearch
             onAssessment={(nextAssessment) => {
               setAssessment(nextAssessment);
+              setDraft(null);
               setActiveTab("result");
             }}
           />
         )}
         {activeTab === "result" && <SearchResult assessment={assessment} onJump={setActiveTab} />}
-        {activeTab === "draft" && <DraftWorkbench />}
-        {activeTab === "export" && <ExportReview />}
+        {activeTab === "draft" && <DraftWorkbench assessment={assessment} draft={draft} onDraft={setDraft} />}
+        {activeTab === "export" && <ExportReview assessment={assessment} draft={draft} />}
       </main>
     </div>
   );
@@ -560,55 +582,150 @@ const outlineLabels: Record<string, string> = {
   protectedPoints: "五、技术关键点和欲保护点",
 };
 
-function DraftWorkbench() {
+function DraftWorkbench({
+  assessment,
+  draft,
+  onDraft,
+}: {
+  assessment: NoveltyAssessment;
+  draft: DisclosureDraft | null;
+  onDraft: (draft: DisclosureDraft) => void;
+}) {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [assistantResult, setAssistantResult] = useState<AssistantActionResult | null>(null);
+  const [assistantLoading, setAssistantLoading] = useState("");
+  const [error, setError] = useState("");
+
+  async function generateDraft() {
+    setIsGenerating(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/patent/draft-disclosure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assessment }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "交底书生成失败");
+      onDraft(data);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  async function runAssistantAction(action: string) {
+    setAssistantLoading(action);
+    setError("");
+
+    try {
+      const response = await fetch("/api/patent/assistant-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, assessment, draft }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "AI 助手动作失败");
+      setAssistantResult(data);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setAssistantLoading("");
+    }
+  }
+
+  const activeDraft = draft || defaultDraft;
+
   return (
     <div className="workbench">
       <aside className="doc-outline">
         <h3>文档结构</h3>
-        {["权利要求书", "技术领域", "背景技术", "发明内容", "具体实施方式", "附图说明"].map((item, index) => (
+        {["权利要求书", "摘要", "现有技术", "技术问题", "技术方案", "实施例", "附图说明"].map((item, index) => (
           <button className={index === 0 ? "outline-item active" : "outline-item"} key={item}>
             {item}
           </button>
         ))}
+        <button className="primary-button full draft-generate" disabled={isGenerating} onClick={generateDraft}>
+          {isGenerating ? "生成中..." : "生成交底书草稿"}
+        </button>
       </aside>
 
       <section className="editor">
         <div className="editor-toolbar">
-          <Badge tone="ok">已连接查新结果</Badge>
-          <span>自动保存于 10:28</span>
+          <Badge tone={draft ? "ok" : "warn"}>{draft ? "DeepSeek 已生成" : "示例草稿"}</Badge>
+          <span>{activeDraft.title}</span>
         </div>
+        {error && <div className="editor-error">{error}</div>}
         <article>
           <h2>权利要求书</h2>
-          <p>
-            <strong>1.</strong> 一种多模态传感器的低功耗融合方法，其特征在于，包括：
-          </p>
-          <p>
-            获取至少两类传感器的候选采样信号；基于异常事件强度确定采样频率调整系数；在边缘计算节点中根据功耗预算约束更新融合权重；输出融合后的设备状态判定结果。
-          </p>
-          <p>
-            <strong>2.</strong> 根据权利要求1所述的方法，其中所述采样频率调整系数由环境变化率和历史误报率共同确定。
-          </p>
+          {activeDraft.claims.map((claim) => (
+            <p key={claim}>{claim}</p>
+          ))}
+          <h2>说明书摘要</h2>
+          <p>{activeDraft.abstractText}</p>
+          {activeDraft.descriptionSections.map((section) => (
+            <section className="draft-section" key={section.heading}>
+              <h3>{section.heading}</h3>
+              <p>{section.content}</p>
+            </section>
+          ))}
         </article>
       </section>
 
       <aside className="assistant-panel">
         <h3>AI Skills 面板</h3>
-        <SkillAction icon={BookOpenText} title="按交底书模板生成章节" />
-        <SkillAction icon={Scale} title="生成从属权利要求" />
-        <SkillAction icon={ShieldCheck} title="保护范围风险审查" />
-        <SkillAction icon={MessageSquareText} title="术语一致性检查" />
-        <SkillAction icon={BrainCircuit} title="说明书反向扩写" />
-        <SkillAction icon={GitCompareArrows} title="补充现有技术区别论述" />
+        <SkillAction icon={BookOpenText} title="按交底书模板生成章节" loading={assistantLoading} onRun={runAssistantAction} />
+        <SkillAction icon={Scale} title="生成从属权利要求" loading={assistantLoading} onRun={runAssistantAction} />
+        <SkillAction icon={ShieldCheck} title="保护范围风险审查" loading={assistantLoading} onRun={runAssistantAction} />
+        <SkillAction icon={MessageSquareText} title="术语一致性检查" loading={assistantLoading} onRun={runAssistantAction} />
+        <SkillAction icon={BrainCircuit} title="说明书反向扩写" loading={assistantLoading} onRun={runAssistantAction} />
+        <SkillAction icon={GitCompareArrows} title="补充现有技术区别论述" loading={assistantLoading} onRun={runAssistantAction} />
         <div className="risk-note">
           <AlertTriangle size={18} />
-          “异常事件强度”需要在说明书中给出计算方式或判定规则。
+          {activeDraft.formatIssues[0] || "请在定稿前补齐参数、实施例和附图标记。"}
         </div>
+        {assistantResult && (
+          <div className="assistant-result">
+            <strong>{assistantResult.title}</strong>
+            <p>{assistantResult.content}</p>
+            {assistantResult.risks && assistantResult.risks.length > 0 && <span>风险：{assistantResult.risks.join("；")}</span>}
+          </div>
+        )}
       </aside>
     </div>
   );
 }
 
-function ExportReview() {
+function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; draft: DisclosureDraft | null }) {
+  const activeDraft = draft || defaultDraft;
+  const markdown = activeDraft.markdown || buildFallbackMarkdown(activeDraft, assessment);
+  const [exportError, setExportError] = useState("");
+
+  function handleDownloadMarkdown() {
+    downloadText(`${sanitizeFilename(activeDraft.title)}_${getTimestamp()}.md`, markdown);
+  }
+
+  async function handleDownloadDocx() {
+    setExportError("");
+    try {
+      const response = await fetch("/api/patent/export-docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draft: activeDraft }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "DOCX 导出失败");
+      }
+      const blob = await response.blob();
+      downloadBlob(`${sanitizeFilename(activeDraft.title)}_${getTimestamp()}.docx`, blob);
+    } catch (nextError) {
+      setExportError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  }
+
   return (
     <div className="export-layout">
       <section className="content-card">
@@ -638,9 +755,9 @@ function ExportReview() {
       <section className="paper-preview">
         <div className="paper">
           <h2>说明书摘要</h2>
-          <p>本发明公开了一种多模态传感器的低功耗融合方法，通过事件触发采样、边缘侧融合权重更新以及功耗预算约束，实现长期部署场景下的稳定监测。</p>
+          <p>{activeDraft.abstractText}</p>
           <h2>权利要求书</h2>
-          <p>1. 一种多模态传感器的低功耗融合方法，其特征在于，包括...</p>
+          <p>{activeDraft.claims[0]}</p>
         </div>
       </section>
 
@@ -651,18 +768,84 @@ function ExportReview() {
           <span>{`{案件名}_{YYYYMMDDHHmmss}.md + .docx`}</span>
           <p>保留 mermaid 系统框图/流程图源文本，并在导出时渲染为图片写入 Word。</p>
         </div>
-        <button className="primary-button full">
-          <Download size={16} /> 导出 CNIPA ZIP
+        {exportError && <div className="form-error">{exportError}</div>}
+        <button className="primary-button full" onClick={handleDownloadMarkdown}>
+          <Download size={16} /> 下载交底书 MD
         </button>
-        <button className="ghost-button full">
+        <button className="ghost-button full" onClick={handleDownloadDocx}>
           <FileText size={16} /> 下载 DOCX
         </button>
         <button className="ghost-button full">
-          <FileCheck2 size={16} /> 下载 PDF
+          <FileCheck2 size={16} /> DOCX/PDF 待接入
         </button>
       </aside>
     </div>
   );
+}
+
+function buildFallbackMarkdown(draft: DisclosureDraft, assessment: NoveltyAssessment) {
+  const sections = draft.descriptionSections.map((section) => `## ${section.heading}\n\n${section.content}`).join("\n\n");
+  return `# 技术交底书
+
+**案件名称**：${draft.title}
+
+## 注意事项
+
+（1）交底书应使代理人能看懂，尤其是背景技术和详细技术方案应完整、清楚。
+（2）技术公开程度应以本领域普通技术人员能够实施为准。
+
+## 查新与创新性结论
+
+风险分：${assessment.riskScore}
+
+${assessment.conclusion}
+
+## 权利要求书草稿
+
+${draft.claims.join("\n\n")}
+
+## 说明书摘要
+
+${draft.abstractText}
+
+${sections}
+
+## 系统框图
+
+\`\`\`mermaid
+${draft.mermaidSystemDiagram}
+\`\`\`
+
+## 流程图
+
+\`\`\`mermaid
+${draft.mermaidFlow}
+\`\`\`
+`;
+}
+
+function sanitizeFilename(filename: string) {
+  return filename.replace(/[\\/:*?"<>|\r\n]/g, "").trim().slice(0, 70) || "PatentDraft";
+}
+
+function getTimestamp() {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+function downloadText(filename: string, content: string) {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  downloadBlob(filename, blob);
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function Metric({ label, value, note }: { label: string; value: string; note: string }) {
@@ -691,11 +874,21 @@ function Insight({ title, text }: { title: string; text: string }) {
   );
 }
 
-function SkillAction({ icon: Icon, title }: { icon: typeof Scale; title: string }) {
+function SkillAction({
+  icon: Icon,
+  title,
+  loading = "",
+  onRun,
+}: {
+  icon: typeof Scale;
+  title: string;
+  loading?: string;
+  onRun?: (title: string) => void;
+}) {
   return (
-    <button className="skill-action">
+    <button className="skill-action" disabled={loading === title} onClick={() => onRun?.(title)}>
       <Icon size={18} />
-      <span>{title}</span>
+      <span>{loading === title ? "处理中..." : title}</span>
       <ChevronRight size={16} />
     </button>
   );

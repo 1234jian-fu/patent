@@ -35,6 +35,7 @@ export interface PatentReference {
 }
 
 export interface NoveltyAssessment {
+  title?: string;
   riskScore: number;
   conclusion: string;
   noveltyPoints: string[];
@@ -44,4 +45,26 @@ export interface NoveltyAssessment {
   crawlerEvidence: CrawledPatentDocument[];
   disclosureOutline?: Record<string, string | string[]>;
   selfCheckRisks?: string[];
+}
+
+export interface DisclosureSection {
+  heading: string;
+  content: string;
+}
+
+export interface DisclosureDraft {
+  title: string;
+  abstractText: string;
+  claims: string[];
+  descriptionSections: DisclosureSection[];
+  mermaidSystemDiagram: string;
+  mermaidFlow: string;
+  formatIssues: string[];
+  markdown: string;
+}
+
+export interface AssistantActionResult {
+  title: string;
+  content: string;
+  risks?: string[];
 }

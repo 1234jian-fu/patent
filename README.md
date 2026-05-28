@@ -8,6 +8,7 @@
 - DeepSeek 驱动的创新性风险评估
 - Top 对比文件、特征 1:1 对比和可主张创新点输出
 - 集成 `handsomestWei/patent-disclosure-skill` 的专利点挖掘、交底书大纲、自检风险和交付命名规则
+- 集成 MiniMax `minimax-docx` 工作流入口，并提供交底书 `.docx` 下载能力
 - 五页一致工作流：工作台、创新性查询、查新结果、智能撰写、格式导出
 
 ## 本地运行
