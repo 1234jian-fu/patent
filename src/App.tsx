@@ -757,6 +757,7 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
         ? "建议把差异特征写成步骤间的耦合关系，同时补足参数范围、触发条件和技术效果。"
         : "可进入权利要求设计，优先把已验证差异写入独权，再用从权覆盖变形方案。";
   const sourceCount = assessment.references.length + assessment.crawlerEvidence.length;
+  const isEvidenceBased = assessment.evidenceStatus !== "preliminary_no_evidence" && sourceCount > 0;
 
   async function handleDownloadReport() {
     setIsExportingReport(true);
@@ -788,9 +789,14 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
         <div className="score-ring" style={{ "--score": `${score}%` } as CSSProperties}>
           {score}
         </div>
-        <Badge tone={riskTone}>{riskLabel}</Badge>
-        <h2>{riskTitle}</h2>
+        <Badge tone={isEvidenceBased ? riskTone : "warn"}>{isEvidenceBased ? riskLabel : "证据不足"}</Badge>
+        <h2>{isEvidenceBased ? riskTitle : "初步自评，不能作为创新性结论"}</h2>
         <p>{assessment.conclusion}</p>
+        {!isEvidenceBased && (
+          <div className="form-error">
+            当前没有对比文件或网页抓取证据。请先运行 CNIPA 自动查新，或粘贴对比文件摘要/权利要求后再生成正式创新性评估。
+          </div>
+        )}
         <div className="score-detail">
           <strong>下一步处理建议</strong>
           <span>{nextStep}</span>
@@ -800,7 +806,7 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
           <span><strong>{assessment.featureComparison.length}</strong>特征对比</span>
           <span><strong>{sourceCount}</strong>证据来源</span>
         </div>
-        <button className="primary-button" onClick={() => onJump("draft")}>
+        <button className="primary-button" disabled={!isEvidenceBased} onClick={() => onJump("draft")}>
           进入智能撰写 <ArrowRight size={16} />
         </button>
         <button className="ghost-button" disabled={isExportingReport} onClick={handleDownloadReport}>
@@ -811,11 +817,12 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
 
       <section className="content-card">
         <div className="section-title">
-          <h3>有证据支撑的创新点</h3>
+          <h3>{isEvidenceBased ? "有证据支撑的创新点" : "待验证候选创新点"}</h3>
           <Badge tone={riskTone}>{assessment.noveltyPoints.length} 项</Badge>
         </div>
-        <div className="novelty-list">
-          {assessment.noveltyPoints.map((point, index) => (
+        {assessment.noveltyPoints.length > 0 ? (
+          <div className="novelty-list">
+            {assessment.noveltyPoints.map((point, index) => (
             <div className="novelty-card" key={point}>
               <div className="novelty-index">{String(index + 1).padStart(2, "0")}</div>
               <div>
@@ -824,8 +831,11 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
                 <span>写作落点：优先转化为独权限定关系或从权补强条件。</span>
               </div>
             </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">暂无可标记为“有证据支撑”的创新点。请补充对比文件后重新评估。</div>
+        )}
       </section>
 
       <section className="content-card wide">
@@ -833,8 +843,9 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
           <h3>Top 对比文件</h3>
           <Badge>{assessment.references.length} 份</Badge>
         </div>
-        <div className="reference-grid">
-          {assessment.references.map((ref) => (
+        {assessment.references.length > 0 ? (
+          <div className="reference-grid">
+            {assessment.references.map((ref) => (
             <article className="reference-card" key={`${ref.publicationNumber}-${ref.title}`}>
               <div className="reference-head">
                 <strong>{ref.publicationNumber || "未识别公开号"}</strong>
@@ -852,8 +863,11 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
                 <i style={{ width: `${Math.max(0, Math.min(100, ref.relevanceScore || 0))}%` }} />
               </div>
             </article>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">没有对比文件。创新性结论需要 CNIPA/Google Patents/EPO/WIPO 或人工粘贴的公开文献证据。</div>
+        )}
       </section>
 
       <section className="content-card wide">
@@ -861,8 +875,9 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
           <h3>特征 1:1 对比</h3>
           <Badge tone={riskTone}>证据链</Badge>
         </div>
-        <div className="feature-table">
-          {assessment.featureComparison.map((item) => (
+        {assessment.featureComparison.length > 0 ? (
+          <div className="feature-table">
+            {assessment.featureComparison.map((item) => (
             <div className="feature-row" key={item.feature}>
               <div>
                 <span className="table-label">待保护特征</span>
@@ -877,8 +892,11 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
                 <p>{item.noveltyJudgement}</p>
               </div>
             </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">暂无 1:1 特征对比。请先补充至少 1 份对比文件证据。</div>
+        )}
       </section>
 
       <section className="content-card wide">

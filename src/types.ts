@@ -36,6 +36,7 @@ export interface PatentReference {
 
 export interface NoveltyAssessment {
   title?: string;
+  evidenceStatus?: "evidence_based" | "preliminary_no_evidence";
   riskScore: number;
   conclusion: string;
   noveltyPoints: string[];

@@ -1189,6 +1189,7 @@ app.post("/api/patent/novelty-assessment", async (req, res) => {
   try {
     const { title, inventionDisclosure, patentUrls, manualEvidence, dateRange } = req.body;
     const searchDateRange = String(dateRange || "未限定").trim();
+    const manualEvidenceText = String(manualEvidence || "").trim();
     const urls = Array.isArray(patentUrls)
       ? patentUrls.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
       : [];
@@ -1221,10 +1222,11 @@ URL：${doc.url}
 标题：${doc.title}
 正文摘录：${doc.excerpt}`,
       ),
-      manualEvidence ? `【人工补充证据】\n${String(manualEvidence).slice(0, 9000)}` : "",
+      manualEvidenceText ? `【人工补充证据】\n${manualEvidenceText.slice(0, 9000)}` : "",
     ]
       .filter(Boolean)
       .join("\n\n");
+    const hasExternalEvidence = crawlerEvidence.length > 0 || manualEvidenceText.length >= 20;
 
     const content = await callDeepSeek({
       responseFormatJson: true,
@@ -1264,14 +1266,37 @@ URL：${doc.url}
 ${String(inventionDisclosure).slice(0, 12000)}
 
 抓取到的中国专利/公开文献证据：
-${evidenceText || "暂无外部网页证据；请基于待申请技术方案给出需补充的检索证据清单。"}`,
+${evidenceText || "暂无外部网页证据；本次只能输出初步自评和需补充检索清单，不能输出有证据支撑的创新性结论。"}`,
         },
       ],
     });
+    const parsed = parseJsonObject(content) as NoveltyReportRequest & {
+      disclosureOutline?: Record<string, string | string[]>;
+      selfCheckRisks?: string[];
+    };
+    const evidenceStatus = hasExternalEvidence ? "evidence_based" : "preliminary_no_evidence";
+    if (!hasExternalEvidence) {
+      parsed.references = [];
+      parsed.noveltyPoints = [];
+      parsed.featureComparison = [];
+      parsed.conclusion = `证据不足，需补充检索。本次未获得对比文件或人工证据，因此不能形成有证据支撑的创新性结论；当前只能基于待申请技术方案给出初步风险提示和查新方向。${parsed.conclusion ? ` ${parsed.conclusion}` : ""}`;
+      parsed.claimSuggestions = [
+        "先运行 CNIPA 自动查新，或粘贴 3-5 篇最接近对比文件的摘要、权利要求或说明书摘录。",
+        "补充每个对比文件公开了哪些相同技术特征、未公开哪些差异特征。",
+        "在获得对比证据前，权利要求只能作为内部草案，不宜标记为已完成创新性判断。",
+        ...(Array.isArray(parsed.claimSuggestions) ? parsed.claimSuggestions.slice(0, 3) : []),
+      ];
+      parsed.selfCheckRisks = [
+        "缺少对比文件，无法判断新颖性和创造性风险。",
+        "缺少证据链，创新点只能视为待验证候选点。",
+        ...(Array.isArray(parsed.selfCheckRisks) ? parsed.selfCheckRisks.slice(0, 3) : []),
+      ];
+    }
 
     res.json({
       title: title || "未命名中国专利请求",
-      ...parseJsonObject(content),
+      ...parsed,
+      evidenceStatus,
       crawlerEvidence,
     });
   } catch (error) {

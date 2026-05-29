@@ -661,6 +661,16 @@ label small {
   line-height: 1.5;
 }
 
+.empty-state {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .span-all {
   grid-column: 1 / -1;
 }
