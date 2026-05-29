@@ -582,6 +582,15 @@ function isGroundedSearchBlock(block: string, title: string, disclosure: string,
   });
 }
 
+function buildFallbackTermCandidates(title: string, disclosure: string) {
+  const anchors = extractSearchAnchors(title, disclosure);
+  return anchors.slice(0, 12).map((term, index) => ({
+    term,
+    type: index < 3 ? "核心对象" : index < 7 ? "技术特征" : "效果/场景",
+    reason: "来自上传文件标题或正文，可作为 CNIPA 分轮检索词。",
+  }));
+}
+
 function fallbackSearchBlocks(title: string, disclosure: string) {
   const stopWords = new Set([
     "一种",
@@ -980,6 +989,7 @@ app.post("/api/patent/search-blocks", async (req, res) => {
       return res.status(400).json({ error: "Missing inventionDisclosure." });
     }
     const anchors = extractSearchAnchors(requestTitle, disclosure);
+    const fallbackTermCandidates = buildFallbackTermCandidates(requestTitle, disclosure);
 
     let data: Record<string, unknown> = {};
     let fallbackReason = "";
@@ -999,6 +1009,7 @@ app.post("/api/patent/search-blocks", async (req, res) => {
             content: `请为以下中国专利请求生成 CNIPA 分轮检索语义块。
 
 输出 JSON 字段：
+- termCandidates: 8-12 个候选查新词条，每项含 term、type、reason。type 只能为 核心对象/技术特征/工艺步骤/材料结构/效果指标/应用场景。
 - blocks: 2-8 个中文语义块，每个语义块 2-12 个中文字符为主，可包含必要英文缩写
 - strategy: 简短说明为什么这样拆分
 - avoidTerms: 不建议单独检索的泛词
@@ -1026,16 +1037,35 @@ ${disclosure.slice(0, 8000)}`,
     let blocks = Array.isArray(data.blocks)
       ? data.blocks.map((block: unknown) => String(block).trim()).filter(Boolean).slice(0, 8)
       : [];
+    let termCandidates = Array.isArray(data.termCandidates)
+      ? data.termCandidates
+          .map((item: unknown) => {
+            if (typeof item === "string") return { term: item, type: "技术特征", reason: "由 DeepSeek 从上传文本中抽取。" };
+            if (!item || typeof item !== "object") return null;
+            const candidate = item as { term?: unknown; type?: unknown; reason?: unknown };
+            return {
+              term: String(candidate.term || "").trim(),
+              type: String(candidate.type || "技术特征").trim(),
+              reason: String(candidate.reason || "来自上传文件标题或正文。").trim(),
+            };
+          })
+          .filter((item): item is { term: string; type: string; reason: string } => Boolean(item?.term))
+      : [];
     const hasPlaceholderBlocks = blocks.some((block) => isPlaceholderSearchBlock(block));
 
     blocks = blocks.filter((block) => isGroundedSearchBlock(block, requestTitle, disclosure, anchors));
+    termCandidates = termCandidates.filter((item) => isGroundedSearchBlock(item.term, requestTitle, disclosure, anchors));
     if (blocks.length < 2) {
       blocks = fallbackSearchBlocks(requestTitle, disclosure);
+    }
+    if (termCandidates.length < 3) {
+      termCandidates = fallbackTermCandidates;
     }
 
     res.json({
       ...data,
       blocks,
+      termCandidates,
       groundedTerms: anchors.slice(0, 12),
       fallbackUsed: Boolean(fallbackReason) || hasPlaceholderBlocks || !Array.isArray(data.blocks) || blocks.length < 2,
       fallbackReason,

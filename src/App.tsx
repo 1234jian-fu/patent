@@ -240,6 +240,12 @@ interface CnipaSearchResult {
   hint?: string;
 }
 
+interface SearchTermCandidate {
+  term: string;
+  type: string;
+  reason: string;
+}
+
 interface ImportedDisclosureSummary {
   fileName: string;
   charCount: number;
@@ -436,6 +442,8 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [isGeneratingBlocks, setIsGeneratingBlocks] = useState(false);
   const [isSearchingCnipa, setIsSearchingCnipa] = useState(false);
   const [searchBlocks, setSearchBlocks] = useState<string[]>([]);
+  const [termCandidates, setTermCandidates] = useState<SearchTermCandidate[]>([]);
+  const [selectedTerms, setSelectedTerms] = useState<string[]>([]);
   const [cnipaResult, setCnipaResult] = useState<CnipaSearchResult | null>(null);
   const [importedDisclosure, setImportedDisclosure] = useState<ImportedDisclosureSummary | null>(null);
   const [error, setError] = useState("");
@@ -466,6 +474,8 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         warnings: Array.isArray(data.warnings) ? data.warnings : [],
       });
       setSearchBlocks([]);
+      setTermCandidates([]);
+      setSelectedTerms([]);
       setCnipaResult(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -495,7 +505,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         }),
       });
       if (!response.ok) throw new Error(data?.error || "检索词生成失败");
-      setSearchBlocks(Array.isArray(data.blocks) ? data.blocks : []);
+      const nextBlocks = Array.isArray(data.blocks) ? data.blocks : [];
+      const nextCandidates = Array.isArray(data.termCandidates) ? data.termCandidates : [];
+      setSearchBlocks(nextBlocks);
+      setTermCandidates(nextCandidates);
+      setSelectedTerms(nextCandidates.length ? nextCandidates.slice(0, 8).map((item: SearchTermCandidate) => item.term) : nextBlocks);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -513,7 +527,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     setError("");
 
     try {
-      let blocks = searchBlocks;
+      let blocks = selectedTerms.length > 0 ? selectedTerms : searchBlocks;
       if (blocks.length === 0) {
         const { response: blockResponse, data: blockData } = await fetchApiJson("/api/patent/search-blocks", {
           method: "POST",
@@ -525,8 +539,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           }),
         });
         if (!blockResponse.ok) throw new Error(blockData?.error || "检索词生成失败");
-        blocks = Array.isArray(blockData.blocks) ? blockData.blocks : [];
+        const nextCandidates = Array.isArray(blockData.termCandidates) ? blockData.termCandidates : [];
+        blocks = nextCandidates.length ? nextCandidates.slice(0, 8).map((item: SearchTermCandidate) => item.term) : Array.isArray(blockData.blocks) ? blockData.blocks : [];
         setSearchBlocks(blocks);
+        setTermCandidates(nextCandidates);
+        setSelectedTerms(blocks);
       }
 
       if (blocks.length === 0) throw new Error("未能生成可用的国知局检索词");
@@ -599,6 +616,14 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     } finally {
       setIsAssessing(false);
     }
+  }
+
+  function toggleSearchTerm(term: string) {
+    setSelectedTerms((current) => (
+      current.includes(term)
+        ? current.filter((item) => item !== term)
+        : [...current, term].slice(0, 8)
+    ));
   }
 
   return (
@@ -674,18 +699,38 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           </label>
           <div className="span-all cnipa-tool">
             <div>
-              <strong>CNIPA 自动查新</strong>
-              <p>按 patent-disclosure-skill 规则先生成 2-8 个语义检索块，再尝试调用国知局公布公告检索脚本；结果会回填到人工证据区。</p>
+              <strong>DeepSeek 词条提取 + CNIPA 自动查新</strong>
+              <p>先从上传文件中提取候选词条，用户确认后再检索 CNIPA 公布公告。当前未接入本地全量专利数据库，结果来自公开网页实时抓取，覆盖率和排序会弱于专业专利库。</p>
             </div>
             <div className="cnipa-actions">
               <button className="ghost-button" disabled={isGeneratingBlocks} onClick={generateSearchBlocks} type="button">
-                {isGeneratingBlocks ? "生成中..." : "生成检索词"}
+                {isGeneratingBlocks ? "提取中..." : "提取候选词条"}
               </button>
-              <button className="ghost-button" disabled={isSearchingCnipa} onClick={runCnipaSearch} type="button">
-                {isSearchingCnipa ? "检索中..." : "运行国知局查新"}
+              <button className="ghost-button" disabled={isSearchingCnipa || (termCandidates.length > 0 && selectedTerms.length === 0)} onClick={runCnipaSearch} type="button">
+                {isSearchingCnipa ? "检索中..." : `用 ${selectedTerms.length || searchBlocks.length || 0} 个词条查新`}
               </button>
             </div>
-            {searchBlocks.length > 0 && (
+            {termCandidates.length > 0 && (
+              <div className="term-candidate-panel">
+                <div className="term-candidate-head">
+                  <strong>候选查新词条</strong>
+                  <span>最多选择 8 个；词条均来自上传题目或正文</span>
+                </div>
+                <div className="term-candidate-grid">
+                  {termCandidates.map((item) => {
+                    const selected = selectedTerms.includes(item.term);
+                    return (
+                      <button className={selected ? "term-chip selected" : "term-chip"} key={`${item.type}-${item.term}`} onClick={() => toggleSearchTerm(item.term)} type="button">
+                        <span>{item.type}</span>
+                        <strong>{item.term}</strong>
+                        <em>{item.reason}</em>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {termCandidates.length === 0 && searchBlocks.length > 0 && (
               <div className="search-blocks">
                 {searchBlocks.map((block) => (
                   <span key={block}>{block}</span>
