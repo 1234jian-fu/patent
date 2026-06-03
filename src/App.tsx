@@ -588,6 +588,60 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     }
   }
 
+  async function resolveSearchTerms() {
+    let blocks = selectedTerms.length > 0 ? selectedTerms : searchBlocks;
+    if (blocks.length > 0) return blocks;
+
+    const { response, data } = await fetchApiJson("/api/patent/search-blocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        inventionDisclosure: searchText,
+        dateRange: formatDateRange(searchStartDate, searchEndDate),
+      }),
+    });
+    if (!response.ok) throw new Error(data?.error || "检索词生成失败");
+
+    const nextCandidates = Array.isArray(data.termCandidates) ? data.termCandidates : [];
+    blocks = nextCandidates.length
+      ? nextCandidates.slice(0, 8).map((item: SearchTermCandidate) => item.term)
+      : Array.isArray(data.blocks) ? data.blocks : [];
+    setSearchBlocks(blocks);
+    setTermCandidates(nextCandidates);
+    setSelectedTerms(blocks);
+    return blocks;
+  }
+
+  async function crawlPublicEvidenceIfNeeded() {
+    const hasEvidence = manualEvidence.trim().length >= 20 || patentUrls.split(/\r?\n/).some((url) => url.trim());
+    if (hasEvidence) return manualEvidence;
+
+    const blocks = await resolveSearchTerms();
+    if (blocks.length === 0) return manualEvidence;
+
+    const { response, data } = await fetchApiJson("/api/patent/public-patent-search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        keywords: blocks,
+        dateRange: formatDateRange(searchStartDate, searchEndDate),
+      }),
+    }, 90_000);
+    if (!response.ok) throw new Error(data?.hint || data?.error || "多源公开抓取失败");
+
+    setCnipaResult(data);
+    const nextEvidence = [manualEvidence, data.evidenceText].filter(Boolean).join("\n\n");
+    if (data.evidenceText) setManualEvidence(nextEvidence);
+    const urls = Array.isArray(data.hits)
+      ? data.hits.map((hit: { link?: string }) => hit.link).filter(Boolean)
+      : [];
+    if (urls.length > 0) {
+      setPatentUrls((current) => Array.from(new Set([...current.split(/\r?\n/).filter(Boolean), ...urls])).join("\n"));
+    }
+    return nextEvidence;
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isInvalidDateRange(searchStartDate, searchEndDate)) {
@@ -599,6 +653,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     setError("");
 
     try {
+      const evidenceForAssessment = await crawlPublicEvidenceIfNeeded();
       const { response, data } = await fetchApiJson("/api/patent/novelty-assessment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -610,7 +665,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             .split(/\r?\n/)
             .map((url) => url.trim())
             .filter(Boolean),
-          manualEvidence,
+          manualEvidence: evidenceForAssessment,
         }),
       }, 90_000);
       if (!response.ok) {
@@ -863,7 +918,7 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
         <p>{assessment.conclusion}</p>
         {!isEvidenceBased && (
           <div className="form-error">
-            当前没有对比文件或网页抓取证据。请先运行 CNIPA 自动查新，或粘贴对比文件摘要/权利要求后再生成正式创新性评估。
+            当前没有可用的对比文件正文证据。系统会优先用词条自动跑 CNIPA、Google Patents、EPO、WIPO 多源公开抓取；若公开页面仍抓不到正文，请补充对比文件链接、摘要或权利要求摘录。
           </div>
         )}
         <div className="score-detail">
