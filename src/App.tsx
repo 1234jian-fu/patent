@@ -651,8 +651,8 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 
         <div className="upload-zone">
           <UploadCloud size={42} />
-          <strong>上传 Word 交底书/专利草稿，自动生成查新输入</strong>
-          <p>课题组成员上传 .docx 后，系统先提取标题和技术方案并填入下方表单；爬取端也支持直接使用候选词条进行多源公开抓取。</p>
+          <strong>Word 辅助生成词条，词条主导多源查新</strong>
+          <p>上传 .docx 后系统会提取标题、技术方案和候选词条；后续爬取端以用户确认的词条为主，Word 文件只作为词条生成和技术背景的辅助材料。</p>
           <div className="upload-actions">
             <label className="file-upload-button">
               <input accept=".docx" disabled={isImportingDisclosure} onChange={handleDisclosureFileUpload} type="file" />
@@ -711,7 +711,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           <div className="span-all cnipa-tool">
             <div>
               <strong>DeepSeek 词条提取 + 多源公开抓取</strong>
-              <p>爬取端只需要关键词/词条，不依赖 Word 文件。系统会用选中的词条同时生成 CNIPA、Google Patents、EPO、WIPO 的公开检索入口并尝试抓取页面证据。</p>
+              <p>爬取端以关键词/词条为核心输入，Word 文件只辅助产生词条和背景。系统会用选中的词条同时生成 CNIPA、Google Patents、EPO、WIPO 的公开检索入口并尝试抓取页面证据。</p>
             </div>
             <div className="cnipa-actions">
               <button className="ghost-button" disabled={isGeneratingBlocks} onClick={generateSearchBlocks} type="button">
