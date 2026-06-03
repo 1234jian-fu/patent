@@ -603,7 +603,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keywords: blocks,
+          keywords: blocks.slice(0, 5),
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
       }, SEARCH_API_TIMEOUT_MS);
@@ -668,7 +668,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        keywords: blocks,
+        keywords: blocks.slice(0, 5),
         dateRange: formatDateRange(searchStartDate, searchEndDate),
       }),
     }, SEARCH_API_TIMEOUT_MS);

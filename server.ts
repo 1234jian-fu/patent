@@ -662,7 +662,7 @@ function fallbackSearchBlocks(title: string, disclosure: string) {
 async function runCnipaSearchBlock(block: string, pythonCommand: string) {
   const args = pythonCommand === "py" ? ["-3", CNIPA_SEARCH_SCRIPT, block] : [CNIPA_SEARCH_SCRIPT, block];
   const { stdout, stderr } = await execFileAsync(pythonCommand, args, {
-    timeout: 75_000,
+    timeout: 18_000,
     cwd: PATENT_DISCLOSURE_SKILL_DIR,
     windowsHide: true,
     env: {
@@ -934,7 +934,7 @@ async function crawlPatentDocument(rawUrl: string): Promise<CrawledPatentDocumen
 }
 
 function buildPublicSearchTargets(blocks: string[]) {
-  return blocks.slice(0, 5).flatMap((block): PublicSearchTarget[] => {
+  return blocks.slice(0, 4).flatMap((block): PublicSearchTarget[] => {
     const query = block.trim();
     const encoded = encodeURIComponent(query);
     return [
@@ -1215,7 +1215,16 @@ async function handlePublicPatentSearch(req: express.Request, res: express.Respo
     const rounds = [];
     const hitMap = new Map<string, CnipaHit>();
     if (status.ready) {
-      for (const block of blocks) {
+      const cnipaBlocks = blocks.slice(0, 2);
+      if (blocks.length > cnipaBlocks.length) {
+        rounds.push({
+          block: "CNIPA quick mode",
+          hits: [] as CnipaHit[],
+          stderr: "",
+          note: `为保证 HF 免费 CPU 上快速返回，本次 CNIPA 脚本仅尝试前 ${cnipaBlocks.length} 个核心词条；其余词条继续用于 Google Patents/EPO/WIPO 公开抓取。`,
+        });
+      }
+      for (const block of cnipaBlocks) {
         try {
           const result = await runCnipaSearchBlock(block, status.pythonCommand);
           rounds.push(result);
@@ -1245,7 +1254,7 @@ async function handlePublicPatentSearch(req: express.Request, res: express.Respo
 
     const hits = Array.from(hitMap.values());
     const publicSources = await Promise.all(buildPublicSearchTargets(blocks).map(crawlPublicSearchTarget));
-    const discoveredLinks = Array.from(new Set(publicSources.flatMap((source) => source.links))).slice(0, 8);
+    const discoveredLinks = Array.from(new Set(publicSources.flatMap((source) => source.links))).slice(0, 4);
     const publicDocuments = await Promise.all(
       discoveredLinks.map(async (url) => {
         try {
