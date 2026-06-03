@@ -236,6 +236,16 @@ interface CnipaSearchResult {
     abstract?: string;
   }>;
   evidenceText?: string;
+  publicSources?: Array<{
+    source: string;
+    query: string;
+    url: string;
+    ok: boolean;
+    title: string;
+    links: string[];
+    note?: string;
+  }>;
+  coverageNote?: string;
   error?: string;
   hint?: string;
 }
@@ -739,8 +749,21 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             )}
             {cnipaResult && (
               <div className="cnipa-result">
-                <strong>{cnipaResult.hits?.length ? `命中 ${cnipaResult.hits.length} 条` : "暂无可用命中"}</strong>
-                <span>{cnipaResult.error || cnipaResult.hint || "检索结果已合并到证据区，可继续生成创新性评估。"}</span>
+                <strong>
+                  CNIPA {cnipaResult.hits?.length || 0} 条 · 公开源 {cnipaResult.publicSources?.length || 0} 个入口
+                </strong>
+                <span>{cnipaResult.error || cnipaResult.hint || cnipaResult.coverageNote || "检索结果已合并到证据区，可继续生成创新性评估。"}</span>
+                {cnipaResult.publicSources && cnipaResult.publicSources.length > 0 && (
+                  <div className="public-source-grid">
+                    {cnipaResult.publicSources.slice(0, 9).map((item) => (
+                      <a href={item.url} key={`${item.source}-${item.query}`} target="_blank" rel="noreferrer">
+                        <strong>{item.source}</strong>
+                        <span>{item.query}</span>
+                        <em>{item.ok ? "已抓取页面" : "需浏览器打开"}</em>
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

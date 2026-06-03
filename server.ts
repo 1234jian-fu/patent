@@ -105,6 +105,21 @@ interface CnipaHit {
   [key: string]: unknown;
 }
 
+interface PublicSearchTarget {
+  source: "Google Patents" | "EPO Espacenet" | "WIPO PATENTSCOPE";
+  query: string;
+  url: string;
+}
+
+interface PublicSearchResult extends PublicSearchTarget {
+  ok: boolean;
+  title: string;
+  excerpt: string;
+  links: string[];
+  note?: string;
+  fetchedAt: string;
+}
+
 interface NoveltyReportRequest {
   title?: string;
   riskScore?: number;
@@ -896,6 +911,87 @@ async function crawlPatentDocument(rawUrl: string): Promise<CrawledPatentDocumen
   }
 }
 
+function buildPublicSearchTargets(blocks: string[]) {
+  return blocks.slice(0, 5).flatMap((block): PublicSearchTarget[] => {
+    const query = block.trim();
+    const encoded = encodeURIComponent(query);
+    return [
+      {
+        source: "Google Patents",
+        query,
+        url: `https://patents.google.com/?q=${encoded}`,
+      },
+      {
+        source: "EPO Espacenet",
+        query,
+        url: `https://worldwide.espacenet.com/patent/search?q=${encoded}`,
+      },
+      {
+        source: "WIPO PATENTSCOPE",
+        query,
+        url: `https://patentscope.wipo.int/search/en/search.jsf?queryString=${encoded}`,
+      },
+    ];
+  });
+}
+
+function extractPatentLinks(html: string, baseUrl: string) {
+  const links = new Set<string>();
+  for (const match of html.matchAll(/href=["']([^"']+)["']/gi)) {
+    const href = match[1];
+    if (!/(\/patent\/|patentscope|espacenet|publication|docdb|CN\d|US\d|EP\d|WO\d)/i.test(href)) continue;
+    try {
+      const resolved = new URL(href, baseUrl).toString();
+      if (/patents\.google\.com|worldwide\.espacenet\.com|patentscope\.wipo\.int|cnipa/i.test(resolved)) {
+        links.add(resolved);
+      }
+    } catch {
+      // Ignore malformed href values from third-party pages.
+    }
+  }
+  return Array.from(links).slice(0, 8);
+}
+
+async function crawlPublicSearchTarget(target: PublicSearchTarget): Promise<PublicSearchResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const response = await fetch(target.url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "PatentDraft/1.0 public-patent-search",
+        Accept: "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.8",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Fetch ${response.status} ${response.statusText}`);
+    }
+
+    const html = await response.text();
+    return {
+      ...target,
+      ok: true,
+      title: extractTitle(html),
+      excerpt: normalizeText(html).slice(0, 1800),
+      links: extractPatentLinks(html, target.url),
+      fetchedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      ...target,
+      ok: false,
+      title: `${target.source} 检索入口`,
+      excerpt: "",
+      links: [],
+      note: error instanceof Error ? error.message : String(error),
+      fetchedAt: new Date().toISOString(),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 app.get("/api/ai/status", (_req, res) => {
   res.json({
     provider: "deepseek",
@@ -1089,49 +1185,64 @@ app.post("/api/patent/cnipa-search", async (req, res) => {
       return res.status(400).json({ error: "Missing search blocks." });
     }
 
-    if (!status.ready) {
-      return res.status(503).json({
-        error: "CNIPA search tool is not ready.",
-        status,
-        hint: "Install Python dependencies from patent-disclosure-skill/tools/requirements-cnipa.txt and run python -m playwright install chromium.",
+    const rounds = [];
+    const hitMap = new Map<string, CnipaHit>();
+    if (status.ready) {
+      for (const block of blocks) {
+        try {
+          const result = await runCnipaSearchBlock(block, status.pythonCommand);
+          rounds.push(result);
+          for (const hit of result.hits) {
+            const key = getCnipaHitKey(hit);
+            if (key && !hitMap.has(key)) {
+              hitMap.set(key, hit);
+            }
+          }
+        } catch (error) {
+          rounds.push({
+            block,
+            hits: [],
+            stderr: "",
+            note: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    } else {
+      rounds.push({
+        block: "CNIPA",
+        hits: [],
+        stderr: "",
+        note: "CNIPA search tool is not ready; public source links were generated instead.",
       });
     }
 
-    const rounds = [];
-    const hitMap = new Map<string, CnipaHit>();
-    for (const block of blocks) {
-      try {
-        const result = await runCnipaSearchBlock(block, status.pythonCommand);
-        rounds.push(result);
-        for (const hit of result.hits) {
-          const key = getCnipaHitKey(hit);
-          if (key && !hitMap.has(key)) {
-            hitMap.set(key, hit);
-          }
-        }
-      } catch (error) {
-        rounds.push({
-          block,
-          hits: [],
-          stderr: "",
-          note: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
     const hits = Array.from(hitMap.values());
+    const publicSources = await Promise.all(buildPublicSearchTargets(blocks).map(crawlPublicSearchTarget));
+    const publicEvidenceText = publicSources
+      .map((item) => {
+        const links = item.links.length ? `\n发现链接：\n${item.links.map((link) => `- ${link}`).join("\n")}` : "";
+        const note = item.ok ? "" : `\n抓取状态：${item.note || "失败"}`;
+        return `【${item.source}】${item.query}\n检索入口：${item.url}${note}\n页面标题：${item.title}\n页面摘录：${item.excerpt || "该公开源需要浏览器打开查看结果。"}${links}`;
+      })
+      .join("\n\n");
+
     res.json({
       status,
       blocks,
       dateRange,
       rounds,
       hits,
-      evidenceText: hits
-        .map((hit) => {
-          const pub = hit.pub_number || hit.pubNumber || "未识别公开号";
-          return `【CNIPA】${pub} ${hit.title || ""}\n检索日期范围：${dateRange}\n链接：${hit.link || ""}\n摘要：${hit.abstract || "该条无摘要字段"}`;
-        })
-        .join("\n\n"),
+      publicSources,
+      coverageNote: "当前未接入本地全量专利数据库。本结果来自 CNIPA 脚本和 Google Patents/EPO/WIPO 公开页面实时抓取，可能受公开网页反爬、排序和关键词影响。",
+      evidenceText: [
+        hits
+          .map((hit) => {
+            const pub = hit.pub_number || hit.pubNumber || "未识别公开号";
+            return `【CNIPA】${pub} ${hit.title || ""}\n检索日期范围：${dateRange}\n链接：${hit.link || ""}\n摘要：${hit.abstract || "该条无摘要字段"}`;
+          })
+          .join("\n\n"),
+        publicEvidenceText,
+      ].filter(Boolean).join("\n\n"),
     });
   } catch (error) {
     res.status(500).json({
