@@ -81,7 +81,9 @@ const references = [
   { id: "CN113558240A", title: "一种工业设备状态监测系统", score: 54, hit: "应用场景接近" },
 ];
 
-const DEFAULT_API_TIMEOUT_MS = 60_000;
+const DEFAULT_API_TIMEOUT_MS = 180_000;
+const SEARCH_API_TIMEOUT_MS = 240_000;
+const GENERATION_API_TIMEOUT_MS = 300_000;
 const HF_SPACE_ORIGIN = "https://jianf123-patentdraft.hf.space";
 
 async function parseApiJson(response: Response) {
@@ -128,7 +130,7 @@ async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeou
     return { response, data };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("请求超过 60 秒仍未返回。请先压缩 Word、删除大图后重试，或稍后再试 HF 免费 CPU。");
+      throw new Error(`请求超过 ${Math.round(timeoutMs / 1000)} 秒仍未返回。请先压缩 Word、删除大图后重试，或稍后再试 HF 免费 CPU。`);
     }
     throw error;
   } finally {
@@ -521,7 +523,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           inventionDisclosure: searchText,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
-      });
+      }, SEARCH_API_TIMEOUT_MS);
       if (!response.ok) throw new Error(data?.error || "检索词生成失败");
       const nextBlocks = Array.isArray(data.blocks) ? data.blocks : [];
       const nextCandidates = Array.isArray(data.termCandidates) ? data.termCandidates : [];
@@ -555,7 +557,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             inventionDisclosure: searchText,
             dateRange: formatDateRange(searchStartDate, searchEndDate),
           }),
-        });
+        }, SEARCH_API_TIMEOUT_MS);
         if (!blockResponse.ok) throw new Error(blockData?.error || "检索词生成失败");
         const nextCandidates = Array.isArray(blockData.termCandidates) ? blockData.termCandidates : [];
         blocks = nextCandidates.length ? nextCandidates.slice(0, 8).map((item: SearchTermCandidate) => item.term) : Array.isArray(blockData.blocks) ? blockData.blocks : [];
@@ -573,7 +575,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           keywords: blocks,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
-      }, 90_000);
+      }, SEARCH_API_TIMEOUT_MS);
       if (!response.ok) {
         setCnipaResult(data);
         throw new Error(data?.hint || data?.error || "国知局查新失败");
@@ -607,7 +609,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         inventionDisclosure: searchText,
         dateRange: formatDateRange(searchStartDate, searchEndDate),
       }),
-    });
+    }, SEARCH_API_TIMEOUT_MS);
     if (!response.ok) throw new Error(data?.error || "检索词生成失败");
 
     const nextCandidates = Array.isArray(data.termCandidates) ? data.termCandidates : [];
@@ -638,7 +640,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         keywords: blocks,
         dateRange: formatDateRange(searchStartDate, searchEndDate),
       }),
-    }, 90_000);
+    }, SEARCH_API_TIMEOUT_MS);
     if (!response.ok) throw new Error(data?.hint || data?.error || "多源公开抓取失败");
 
     setCnipaResult(data);
@@ -679,7 +681,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           patentUrls: evidenceForAssessment.urls,
           manualEvidence: evidenceForAssessment.evidence,
         }),
-      }, 90_000);
+      }, GENERATION_API_TIMEOUT_MS);
       if (!response.ok) {
         throw new Error(data?.error || "创新性评估失败");
       }
@@ -1149,7 +1151,7 @@ function DraftWorkbench({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment, inventionDisclosure: source.inventionDisclosure }),
-      });
+      }, GENERATION_API_TIMEOUT_MS);
       if (!response.ok) throw new Error(data?.error || "交底书生成失败");
       onDraft(data);
       setActiveSection("claims");
@@ -1175,7 +1177,7 @@ function DraftWorkbench({
           source,
           currentSection: currentSection?.label || "未选择章节",
         }),
-      });
+      }, GENERATION_API_TIMEOUT_MS);
       if (!response.ok) throw new Error(data?.error || "AI 助手动作失败");
       setAssistantResult(data);
     } catch (nextError) {
