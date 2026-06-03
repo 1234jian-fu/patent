@@ -810,7 +810,18 @@ function validateDraftDomain(draft: Record<string, unknown>, sourceText: string)
 }
 
 app.use(express.json({ limit: "15mb" }));
+app.use(express.text({ type: "text/plain", limit: "15mb" }));
 app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+app.use((req, _res, next) => {
+  if (typeof req.body === "string" && req.body.trim()) {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch {
+      // Keep non-JSON text bodies untouched.
+    }
+  }
+  next();
+});
 
 function getDeepSeekApiKey() {
   const apiKey = process.env.DEEPSEEK_API_KEY;

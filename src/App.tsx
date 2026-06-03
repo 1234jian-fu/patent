@@ -111,18 +111,29 @@ function shouldRetryWithSpace(input: RequestInfo | URL) {
   return typeof input === "string" && input.startsWith("/api/") && window.location.origin !== HF_SPACE_ORIGIN;
 }
 
+function normalizeApiInit(init?: RequestInit) {
+  if (!init?.headers || typeof init.body !== "string") return init;
+  const headers = new Headers(init.headers);
+  const contentType = headers.get("Content-Type") || headers.get("content-type") || "";
+  if (contentType.toLowerCase().includes("application/json")) {
+    headers.set("Content-Type", "text/plain");
+  }
+  return { ...init, headers };
+}
+
 async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const requestInit = normalizeApiInit(init);
 
   try {
     let response;
     try {
-      response = await fetch(input, { ...init, signal: controller.signal });
+      response = await fetch(input, { ...requestInit, signal: controller.signal });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       if (!shouldRetryWithSpace(input)) throw error;
-      response = await fetch(getAbsoluteApiInput(input), { ...init, signal: controller.signal });
+      response = await fetch(getAbsoluteApiInput(input), { ...requestInit, signal: controller.signal });
     }
     let data;
     try {
@@ -133,7 +144,7 @@ async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeou
         error.message.includes("HTML 页面") &&
         shouldRetryWithSpace(input);
       if (!shouldRetryAbsolute) throw error;
-      response = await fetch(getAbsoluteApiInput(input), { ...init, signal: controller.signal });
+      response = await fetch(getAbsoluteApiInput(input), { ...requestInit, signal: controller.signal });
       data = await parseApiJson(response);
     }
     return { response, data };
@@ -914,11 +925,11 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
     setReportError("");
 
     try {
-      const response = await fetch(getAbsoluteApiInput("/api/patent/export-novelty-report-docx"), {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-novelty-report-docx"), normalizeApiInit({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment }),
-      });
+      }));
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data?.error || "查新报告 DOCX 导出失败");
@@ -1497,11 +1508,11 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   async function handleDownloadDocx() {
     setExportError("");
     try {
-      const response = await fetch(getAbsoluteApiInput("/api/patent/export-docx"), {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-docx"), normalizeApiInit({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ draft: activeDraft }),
-      });
+      }));
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data?.error || "DOCX 导出失败");
@@ -1516,11 +1527,11 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   async function handleDownloadMiniMaxDocx() {
     setExportError("");
     try {
-      const response = await fetch(getAbsoluteApiInput("/api/patent/export-docx-minimax"), {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-docx-minimax"), normalizeApiInit({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ draft: activeDraft, fallback: true }),
-      });
+      }));
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data?.error || "MiniMax DOCX 导出失败");
@@ -1543,11 +1554,11 @@ function ExportReview({ assessment, draft }: { assessment: NoveltyAssessment; dr
   async function handleDownloadNoveltyReportDocx() {
     setExportError("");
     try {
-      const response = await fetch(getAbsoluteApiInput("/api/patent/export-novelty-report-docx"), {
+      const response = await fetch(getAbsoluteApiInput("/api/patent/export-novelty-report-docx"), normalizeApiInit({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment }),
-      });
+      }));
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data?.error || "查新报告 DOCX 导出失败");
