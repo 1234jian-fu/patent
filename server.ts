@@ -1223,6 +1223,22 @@ async function handlePublicPatentSearch(req: express.Request, res: express.Respo
 
     const hits = Array.from(hitMap.values());
     const publicSources = await Promise.all(buildPublicSearchTargets(blocks).map(crawlPublicSearchTarget));
+    const discoveredLinks = Array.from(new Set(publicSources.flatMap((source) => source.links))).slice(0, 8);
+    const publicDocuments = await Promise.all(
+      discoveredLinks.map(async (url) => {
+        try {
+          return await crawlPatentDocument(url);
+        } catch (error) {
+          return {
+            url,
+            source: detectPatentSource(new URL(url).hostname),
+            title: "公开专利详情页抓取失败",
+            excerpt: error instanceof Error ? error.message : String(error),
+            fetchedAt: new Date().toISOString(),
+          };
+        }
+      }),
+    );
     const publicEvidenceText = publicSources
       .map((item) => {
         const links = item.links.length ? `\n发现链接：\n${item.links.map((link) => `- ${link}`).join("\n")}` : "";
@@ -1230,6 +1246,15 @@ async function handlePublicPatentSearch(req: express.Request, res: express.Respo
         return `【${item.source}】${item.query}\n检索入口：${item.url}${note}\n页面标题：${item.title}\n页面摘录：${item.excerpt || "该公开源需要浏览器打开查看结果。"}${links}`;
       })
       .join("\n\n");
+    const publicDocumentEvidenceText = publicDocuments
+      .map((doc, index) => `【公开专利详情页 ${index + 1}】来源：${doc.source}
+URL：${doc.url}
+标题：${doc.title}
+正文摘录：${doc.excerpt}`)
+      .join("\n\n");
+    const cnipaStatusText = status.ready
+      ? ""
+      : `【CNIPA 自动检索状态】CNIPA 检索脚本暂不可用或 Python 环境未就绪；脚本路径：${status.scriptPath}。系统已继续执行 Google Patents、EPO、WIPO 公开页面抓取。`;
 
     res.json({
       status,
@@ -1238,8 +1263,10 @@ async function handlePublicPatentSearch(req: express.Request, res: express.Respo
       rounds,
       hits,
       publicSources,
+      publicDocuments,
       coverageNote: "当前未接入本地全量专利数据库。本结果来自 CNIPA 脚本和 Google Patents/EPO/WIPO 公开页面实时抓取，可能受公开网页反爬、排序和关键词影响。",
       evidenceText: [
+        cnipaStatusText,
         hits
           .map((hit) => {
             const pub = hit.pub_number || hit.pubNumber || "未识别公开号";
@@ -1247,6 +1274,7 @@ async function handlePublicPatentSearch(req: express.Request, res: express.Respo
           })
           .join("\n\n"),
         publicEvidenceText,
+        publicDocumentEvidenceText,
       ].filter(Boolean).join("\n\n"),
     });
   } catch (error) {
@@ -1396,12 +1424,12 @@ URL：${doc.url}
 - 不允许出现 CNXXXX、CNYYYY、对比文件1标题、[具体结构/方法]、[参数/步骤] 等占位符。
 - 不允许把没有出现在证据中的专利号、标题、申请人、URL 写入 references。
 - 每个 noveltyPoints 与 featureComparison 必须引用待申请方案或证据中的真实技术特征。
-- 证据不足时，riskScore 可保守给出，但 conclusion、selfCheckRisks、claimSuggestions 要说明需要补充哪些检索材料。
+- 证据充足时输出有证据支撑的创新点；证据不足时也必须输出“待验证候选创新点”、初步结论、selfCheckRisks 和 claimSuggestions，并说明需要补充哪些检索材料。
 
 输出 JSON 字段：
 - riskScore: 0-100，越高表示创新性风险越高
 - conclusion: 结论，说明是否建议进入撰写、需要补强哪里
-- noveltyPoints: 3-5 个有证据支撑的创新点
+- noveltyPoints: 3-5 个创新点；有外部证据时写有证据支撑的创新点，证据不足时写待验证候选创新点
 - featureComparison: 数组，每项含 feature、evidence、noveltyJudgement
 - references: Top 对比文件，每项含 publicationNumber、title、source、relevanceScore、keyDisclosure、url
 - claimSuggestions: 3-6 条权利要求撰写建议，必须围绕差异特征
@@ -1425,10 +1453,35 @@ ${evidenceText || "暂无外部网页证据；本次只能输出初步自评和�
     };
     const evidenceStatus = hasExternalEvidence ? "evidence_based" : "preliminary_no_evidence";
     if (!hasExternalEvidence) {
+      const preliminaryTerms = fallbackSearchBlocks(String(title || ""), String(inventionDisclosure || "")).slice(0, 5);
+      const fallbackPoints = preliminaryTerms.length > 0
+        ? preliminaryTerms.map((term) => `候选差异点：围绕“${term}”形成的技术特征可作为初步创新点，但仍需通过 CNIPA、Google Patents、EPO、WIPO 对比文件正文确认是否已公开。`)
+        : [
+            "候选差异点：待申请方案中的核心结构、步骤或控制逻辑需要进一步拆解为可检索特征，并通过公开对比文件确认是否已公开。",
+            "候选差异点：待申请方案声称的技术效果需要补充对应技术手段和证据链，避免只写结果性描述。",
+            "候选差异点：权利要求可先围绕待申请方案中的必要特征构建，但保护范围应在获得对比文件后再收窄或扩展。",
+          ];
       parsed.references = [];
-      parsed.noveltyPoints = [];
-      parsed.featureComparison = [];
-      parsed.conclusion = `证据不足，需补充检索。本次未获得对比文件或人工证据，因此不能形成有证据支撑的创新性结论；当前只能基于待申请技术方案给出初步风险提示和查新方向。${parsed.conclusion ? ` ${parsed.conclusion}` : ""}`;
+      if (!Array.isArray(parsed.noveltyPoints) || parsed.noveltyPoints.length === 0) {
+        parsed.noveltyPoints = fallbackPoints;
+      } else {
+        parsed.noveltyPoints = parsed.noveltyPoints
+          .filter((point) => String(point || "").trim())
+          .slice(0, 5)
+          .map((point) => String(point).startsWith("候选") ? String(point) : `候选差异点：${point}（需补充对比文件正文证据确认）。`);
+      }
+      if (!Array.isArray(parsed.featureComparison) || parsed.featureComparison.length === 0) {
+        parsed.featureComparison = parsed.noveltyPoints.slice(0, 5).map((point) => {
+          const feature = String(point).replace(/^候选差异点：/, "").split(/[，。；;]/)[0] || "待验证技术特征";
+          return {
+            feature,
+            evidence: "暂无对比文件正文证据；该项仅来自待申请技术方案或上传交底书抽取的词条。",
+            noveltyJudgement: "可作为待验证创新点进入撰写草稿，但不能作为正式新颖性/创造性结论。",
+          };
+        });
+      }
+      parsed.riskScore = Math.max(Number(parsed.riskScore) || 65, 65);
+      parsed.conclusion = `证据不足，以下结论为基于上传交底书/待申请技术方案和自动检索词条形成的初步判断，不构成正式新颖性或创造性结论。当前仍可进入撰写草稿阶段：建议先把候选差异点转化为权利要求的技术特征，同时继续补充 CNIPA、Google Patents、EPO、WIPO 的对比文件正文、摘要或权利要求摘录。${parsed.conclusion ? ` ${parsed.conclusion}` : ""}`;
       parsed.claimSuggestions = [
         "先运行 CNIPA 自动查新，或粘贴 3-5 篇最接近对比文件的摘要、权利要求或说明书摘录。",
         "补充每个对比文件公开了哪些相同技术特征、未公开哪些差异特征。",

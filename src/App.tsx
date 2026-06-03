@@ -245,6 +245,13 @@ interface CnipaSearchResult {
     links: string[];
     note?: string;
   }>;
+  publicDocuments?: Array<{
+    source: string;
+    url: string;
+    title: string;
+    excerpt: string;
+    fetchedAt: string;
+  }>;
   coverageNote?: string;
   error?: string;
   hint?: string;
@@ -614,11 +621,15 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   }
 
   async function crawlPublicEvidenceIfNeeded() {
+    const currentUrls = patentUrls
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean);
     const hasEvidence = manualEvidence.trim().length >= 20 || patentUrls.split(/\r?\n/).some((url) => url.trim());
-    if (hasEvidence) return manualEvidence;
+    if (hasEvidence) return { evidence: manualEvidence, urls: currentUrls };
 
     const blocks = await resolveSearchTerms();
-    if (blocks.length === 0) return manualEvidence;
+    if (blocks.length === 0) return { evidence: manualEvidence, urls: currentUrls };
 
     const { response, data } = await fetchApiJson("/api/patent/public-patent-search", {
       method: "POST",
@@ -633,13 +644,17 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     setCnipaResult(data);
     const nextEvidence = [manualEvidence, data.evidenceText].filter(Boolean).join("\n\n");
     if (data.evidenceText) setManualEvidence(nextEvidence);
-    const urls = Array.isArray(data.hits)
+    const urlsFromHits = Array.isArray(data.hits)
       ? data.hits.map((hit: { link?: string }) => hit.link).filter(Boolean)
       : [];
+    const urlsFromDocuments = Array.isArray(data.publicDocuments)
+      ? data.publicDocuments.map((doc: { url?: string }) => doc.url).filter(Boolean)
+      : [];
+    const urls = Array.from(new Set([...currentUrls, ...urlsFromHits, ...urlsFromDocuments]));
     if (urls.length > 0) {
-      setPatentUrls((current) => Array.from(new Set([...current.split(/\r?\n/).filter(Boolean), ...urls])).join("\n"));
+      setPatentUrls(urls.join("\n"));
     }
-    return nextEvidence;
+    return { evidence: nextEvidence, urls };
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -661,11 +676,8 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           title,
           inventionDisclosure: searchText,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
-          patentUrls: patentUrls
-            .split(/\r?\n/)
-            .map((url) => url.trim())
-            .filter(Boolean),
-          manualEvidence: evidenceForAssessment,
+          patentUrls: evidenceForAssessment.urls,
+          manualEvidence: evidenceForAssessment.evidence,
         }),
       }, 90_000);
       if (!response.ok) {
@@ -806,7 +818,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
             {cnipaResult && (
               <div className="cnipa-result">
                 <strong>
-                  CNIPA {cnipaResult.hits?.length || 0} 条 · 公开源 {cnipaResult.publicSources?.length || 0} 个入口
+                  CNIPA {cnipaResult.hits?.length || 0} 条 · 公开源 {cnipaResult.publicSources?.length || 0} 个入口 · 详情页 {cnipaResult.publicDocuments?.length || 0} 个
                 </strong>
                 <span>{cnipaResult.error || cnipaResult.hint || cnipaResult.coverageNote || "检索结果已合并到证据区，可继续生成创新性评估。"}</span>
                 {cnipaResult.publicSources && cnipaResult.publicSources.length > 0 && (
@@ -930,8 +942,8 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
           <span><strong>{assessment.featureComparison.length}</strong>特征对比</span>
           <span><strong>{sourceCount}</strong>证据来源</span>
         </div>
-        <button className="primary-button" disabled={!isEvidenceBased} onClick={() => onJump("draft")}>
-          进入智能撰写 <ArrowRight size={16} />
+        <button className="primary-button" onClick={() => onJump("draft")}>
+          {isEvidenceBased ? "进入智能撰写" : "基于初步结论撰写"} <ArrowRight size={16} />
         </button>
         <button className="ghost-button" disabled={isExportingReport} onClick={handleDownloadReport}>
           <Download size={16} /> {isExportingReport ? "正在生成..." : "下载 Word 查新报告"}
