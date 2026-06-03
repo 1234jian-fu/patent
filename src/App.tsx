@@ -107,12 +107,23 @@ function getAbsoluteApiInput(input: RequestInfo | URL) {
   return input;
 }
 
+function shouldRetryWithSpace(input: RequestInfo | URL) {
+  return typeof input === "string" && input.startsWith("/api/") && window.location.origin !== HF_SPACE_ORIGIN;
+}
+
 async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    let response = await fetch(input, { ...init, signal: controller.signal });
+    let response;
+    try {
+      response = await fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (!shouldRetryWithSpace(input)) throw error;
+      response = await fetch(getAbsoluteApiInput(input), { ...init, signal: controller.signal });
+    }
     let data;
     try {
       data = await parseApiJson(response);
@@ -120,9 +131,7 @@ async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeou
       const shouldRetryAbsolute =
         error instanceof Error &&
         error.message.includes("HTML 页面") &&
-        typeof input === "string" &&
-        input.startsWith("/api/") &&
-        window.location.origin !== HF_SPACE_ORIGIN;
+        shouldRetryWithSpace(input);
       if (!shouldRetryAbsolute) throw error;
       response = await fetch(getAbsoluteApiInput(input), { ...init, signal: controller.signal });
       data = await parseApiJson(response);
@@ -131,6 +140,9 @@ async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeou
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error(`请求超过 ${Math.round(timeoutMs / 1000)} 秒仍未返回。请先压缩 Word、删除大图后重试，或稍后再试 HF 免费 CPU。`);
+    }
+    if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
+      throw new Error("网络请求失败：浏览器没有连上后端 API。请刷新页面重试；如果从本地预览页打开，请确认 HF Space 已启动且网络未拦截跨域请求。");
     }
     throw error;
   } finally {

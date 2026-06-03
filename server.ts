@@ -49,6 +49,17 @@ const upload = multer({
   },
 });
 
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 const CHINA_PATENT_DRAFTER_RULES = `
 china-patent-drafter 真实 Skill 写法规则：
 1. 默认生成中国发明专利草案，结构包括：发明名称、摘要、权利要求书、说明书（技术领域、背景技术、发明内容、附图说明、具体实施方式）、摘要图、可进一步强化的保护点建议、专业审查提示。
