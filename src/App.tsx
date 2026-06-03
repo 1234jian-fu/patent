@@ -457,6 +457,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [cnipaResult, setCnipaResult] = useState<CnipaSearchResult | null>(null);
   const [importedDisclosure, setImportedDisclosure] = useState<ImportedDisclosureSummary | null>(null);
   const [error, setError] = useState("");
+  const searchText = inventionDisclosure.trim() || title.trim();
 
   async function handleDisclosureFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -510,7 +511,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
-          inventionDisclosure,
+          inventionDisclosure: searchText,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
       });
@@ -544,7 +545,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title,
-            inventionDisclosure,
+            inventionDisclosure: searchText,
             dateRange: formatDateRange(searchStartDate, searchEndDate),
           }),
         });
@@ -558,11 +559,11 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 
       if (blocks.length === 0) throw new Error("未能生成可用的国知局检索词");
 
-      const { response, data } = await fetchApiJson("/api/patent/cnipa-search", {
+      const { response, data } = await fetchApiJson("/api/patent/public-patent-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          blocks,
+          keywords: blocks,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
         }),
       }, 90_000);
@@ -603,7 +604,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
-          inventionDisclosure,
+          inventionDisclosure: searchText,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
           patentUrls: patentUrls
             .split(/\r?\n/)
@@ -618,7 +619,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
 
       onAssessment(data, {
         title,
-        inventionDisclosure,
+        inventionDisclosure: searchText,
         dateRange: formatDateRange(searchStartDate, searchEndDate),
       });
     } catch (nextError) {
@@ -651,7 +652,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
         <div className="upload-zone">
           <UploadCloud size={42} />
           <strong>上传 Word 交底书/专利草稿，自动生成查新输入</strong>
-          <p>课题组成员上传 .docx 后，系统先提取标题和技术方案并填入下方表单；确认内容后再运行国知局查新或生成创新性评估。</p>
+          <p>课题组成员上传 .docx 后，系统先提取标题和技术方案并填入下方表单；爬取端也支持直接使用候选词条进行多源公开抓取。</p>
           <div className="upload-actions">
             <label className="file-upload-button">
               <input accept=".docx" disabled={isImportingDisclosure} onChange={handleDisclosureFileUpload} type="file" />
@@ -709,15 +710,15 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           </label>
           <div className="span-all cnipa-tool">
             <div>
-              <strong>DeepSeek 词条提取 + CNIPA 自动查新</strong>
-              <p>先从上传文件中提取候选词条，用户确认后再检索 CNIPA 公布公告。当前未接入本地全量专利数据库，结果来自公开网页实时抓取，覆盖率和排序会弱于专业专利库。</p>
+              <strong>DeepSeek 词条提取 + 多源公开抓取</strong>
+              <p>爬取端只需要关键词/词条，不依赖 Word 文件。系统会用选中的词条同时生成 CNIPA、Google Patents、EPO、WIPO 的公开检索入口并尝试抓取页面证据。</p>
             </div>
             <div className="cnipa-actions">
               <button className="ghost-button" disabled={isGeneratingBlocks} onClick={generateSearchBlocks} type="button">
                 {isGeneratingBlocks ? "提取中..." : "提取候选词条"}
               </button>
               <button className="ghost-button" disabled={isSearchingCnipa || (termCandidates.length > 0 && selectedTerms.length === 0)} onClick={runCnipaSearch} type="button">
-                {isSearchingCnipa ? "检索中..." : `用 ${selectedTerms.length || searchBlocks.length || 0} 个词条查新`}
+                {isSearchingCnipa ? "抓取中..." : `用 ${selectedTerms.length || searchBlocks.length || 0} 个词条多源抓取`}
               </button>
             </div>
             {termCandidates.length > 0 && (

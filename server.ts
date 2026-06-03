@@ -1173,16 +1173,21 @@ ${disclosure.slice(0, 8000)}`,
   }
 });
 
-app.post("/api/patent/cnipa-search", async (req, res) => {
+async function handlePublicPatentSearch(req: express.Request, res: express.Response) {
   try {
     const status = await getCnipaSearchStatus();
     const dateRange = String(req.body?.dateRange || "未限定").trim();
-    const blocks = Array.isArray(req.body?.blocks)
-      ? req.body.blocks.map((block: unknown) => String(block).trim()).filter(Boolean).slice(0, 8)
-      : [];
+    const rawBlocks = Array.isArray(req.body?.blocks) ? req.body.blocks : req.body?.keywords;
+    const blocks = Array.isArray(rawBlocks)
+      ? rawBlocks.map((block: unknown) => String(block).trim()).filter(Boolean).slice(0, 8)
+      : String(rawBlocks || "")
+          .split(/[,\n，、;；]+/)
+          .map((block) => block.trim())
+          .filter(Boolean)
+          .slice(0, 8);
 
     if (blocks.length === 0) {
-      return res.status(400).json({ error: "Missing search blocks." });
+      return res.status(400).json({ error: "Missing search keywords." });
     }
 
     const rounds = [];
@@ -1249,7 +1254,10 @@ app.post("/api/patent/cnipa-search", async (req, res) => {
       error: error instanceof Error ? error.message : String(error),
     });
   }
-});
+}
+
+app.post("/api/patent/public-patent-search", handlePublicPatentSearch);
+app.post("/api/patent/cnipa-search", handlePublicPatentSearch);
 
 app.post("/api/deepseek/chat", async (req, res) => {
   try {
