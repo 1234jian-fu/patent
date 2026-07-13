@@ -133,6 +133,17 @@ interface PublicSearchResult extends PublicSearchTarget {
 
 interface NoveltyReportRequest {
   title?: string;
+  evidenceStatus?: "evidence_based" | "limited_evidence" | "preliminary_no_evidence";
+  evidenceProfile?: {
+    level?: "strong" | "limited" | "none";
+    confidenceScore?: number;
+    validSourceCount?: number;
+    attemptedSourceCount?: number;
+    featureCoverage?: number;
+    basis?: string[];
+    limitations?: string[];
+    calibrationNote?: string;
+  };
   riskScore?: number;
   conclusion?: string;
   noveltyPoints?: string[];
@@ -149,6 +160,12 @@ interface NoveltyReportRequest {
   crawlerEvidence?: CrawledPatentDocument[];
   disclosureOutline?: Record<string, string | string[]>;
   selfCheckRisks?: string[];
+}
+
+interface SearchEvidenceMeta {
+  cnipaHitCount?: number;
+  publicDocumentCount?: number;
+  attemptedSourceCount?: number;
 }
 
 function sendApiError(res: express.Response, status: number, error: unknown, fallbackMessage = "服务器处理失败") {
@@ -405,16 +422,20 @@ async function createNoveltyReportDocxBuffer(assessment: NoveltyReportRequest) {
   const claimSuggestions = Array.isArray(assessment.claimSuggestions) ? assessment.claimSuggestions : [];
   const crawlerEvidence = Array.isArray(assessment.crawlerEvidence) ? assessment.crawlerEvidence : [];
   const selfCheckRisks = Array.isArray(assessment.selfCheckRisks) ? assessment.selfCheckRisks : [];
+  const evidenceProfile = assessment.evidenceProfile;
+  const isPreliminary = assessment.evidenceStatus === "preliminary_no_evidence" || evidenceProfile?.level === "none";
 
   const children: Paragraph[] = [
     new Paragraph({ text: "中国专利创新性查新报告", heading: HeadingLevel.TITLE, spacing: { after: 300 } }),
     labelParagraph("案件名称", title),
     labelParagraph("生成时间", new Date().toLocaleString("zh-CN")),
     labelParagraph("创新性风险分", `${score}/100`),
-    labelParagraph("证据来源数量", `${references.length} 份对比文件，${crawlerEvidence.length} 个网页抓取来源`),
+    labelParagraph("结论可信度", `${Number(evidenceProfile?.confidenceScore) || 0}/100`),
+    labelParagraph("有效证据来源", `${Number(evidenceProfile?.validSourceCount) || references.length + crawlerEvidence.length} 个`),
+    labelParagraph("分数说明", evidenceProfile?.calibrationNote || "风险分表示当前证据下的技术重合风险，不是授权概率。"),
     new Paragraph({ text: "一、查新结论", heading: HeadingLevel.HEADING_1 }),
     reportParagraph(assessment.conclusion || "暂无查新结论。"),
-    new Paragraph({ text: "二、有证据支撑的创新点", heading: HeadingLevel.HEADING_1 }),
+    new Paragraph({ text: isPreliminary ? "二、待验证候选创新点" : "二、当前证据支持的候选创新点", heading: HeadingLevel.HEADING_1 }),
     ...(noveltyPoints.length ? noveltyPoints.map((point, index) => bulletParagraph(`${index + 1}. ${point}`)) : [reportParagraph("暂无创新点。")]),
     new Paragraph({ text: "三、Top 对比文件", heading: HeadingLevel.HEADING_1 }),
   ];
@@ -933,6 +954,51 @@ async function crawlPatentDocument(rawUrl: string): Promise<CrawledPatentDocumen
   }
 }
 
+function clampScore(value: unknown, fallback = 50) {
+  const numeric = Number(value);
+  return Math.max(0, Math.min(100, Number.isFinite(numeric) ? numeric : fallback));
+}
+
+function isUsablePatentDocument(doc: CrawledPatentDocument) {
+  const excerpt = String(doc.excerpt || "").trim();
+  const marker = `${doc.source} ${doc.title} ${excerpt}`.toLowerCase();
+  const failureMarkers = [
+    "抓取失败",
+    "无法抓取",
+    "fetch 4",
+    "fetch 5",
+    "aborted",
+    "timeout",
+    "failed to fetch",
+    "公开专利详情页抓取失败",
+  ];
+  return excerpt.length >= 120 && !failureMarkers.some((item) => marker.includes(item));
+}
+
+function normalizeEvidenceMeta(value: unknown): SearchEvidenceMeta {
+  if (!value || typeof value !== "object") return {};
+  const meta = value as Record<string, unknown>;
+  return {
+    cnipaHitCount: Math.max(0, Number(meta.cnipaHitCount) || 0),
+    publicDocumentCount: Math.max(0, Number(meta.publicDocumentCount) || 0),
+    attemptedSourceCount: Math.max(0, Number(meta.attemptedSourceCount) || 0),
+  };
+}
+
+function referenceAppearsInEvidence(reference: NonNullable<NoveltyReportRequest["references"]>[number], evidenceText: string) {
+  const corpus = evidenceText.toLowerCase();
+  const candidates = [reference.publicationNumber, reference.url, reference.title]
+    .map((item) => String(item || "").trim())
+    .filter((item) => item.length >= 6);
+  return candidates.some((item) => corpus.includes(item.toLowerCase()));
+}
+
+function featureHasConcreteEvidence(item: NonNullable<NoveltyReportRequest["featureComparison"]>[number]) {
+  const evidence = String(item.evidence || "").trim();
+  if (evidence.length < 30) return false;
+  return !/暂无|证据不足|未检索到|待补充|仅来自待申请|无法判断/.test(evidence);
+}
+
 function buildPublicSearchTargets(blocks: string[]) {
   return blocks.slice(0, 4).flatMap((block): PublicSearchTarget[] => {
     const query = block.trim();
@@ -1395,9 +1461,11 @@ ${userContent}`,
 
 app.post("/api/patent/novelty-assessment", async (req, res) => {
   try {
-    const { title, inventionDisclosure, patentUrls, manualEvidence, dateRange } = req.body;
+    const { title, inventionDisclosure, patentUrls, manualEvidence, automatedEvidence, evidenceMeta, dateRange } = req.body;
     const searchDateRange = String(dateRange || "未限定").trim();
     const manualEvidenceText = String(manualEvidence || "").trim();
+    const automatedEvidenceText = String(automatedEvidence || "").trim();
+    const normalizedEvidenceMeta = normalizeEvidenceMeta(evidenceMeta);
     const urls = Array.isArray(patentUrls)
       ? patentUrls.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
       : [];
@@ -1422,8 +1490,9 @@ app.post("/api/patent/novelty-assessment", async (req, res) => {
       }),
     );
 
+    const usableCrawlerEvidence = crawlerEvidence.filter(isUsablePatentDocument);
     const evidenceText = [
-      ...crawlerEvidence.map(
+      ...usableCrawlerEvidence.map(
         (doc, index) => `【对比文件${index + 1}】
 来源：${doc.source}
 URL：${doc.url}
@@ -1431,10 +1500,22 @@ URL：${doc.url}
 正文摘录：${doc.excerpt}`,
       ),
       manualEvidenceText ? `【人工补充证据】\n${manualEvidenceText.slice(0, 9000)}` : "",
+      automatedEvidenceText ? `【自动检索记录】\n${automatedEvidenceText.slice(0, 12000)}` : "",
     ]
       .filter(Boolean)
       .join("\n\n");
-    const hasExternalEvidence = crawlerEvidence.length > 0 || manualEvidenceText.length >= 20;
+    const hasManualEvidence = manualEvidenceText.length >= 120;
+    const automatedValidCount = Math.max(
+      Number(normalizedEvidenceMeta.cnipaHitCount) || 0,
+      Number(normalizedEvidenceMeta.publicDocumentCount) || 0,
+    );
+    const validSourceCount = Math.max(usableCrawlerEvidence.length, automatedValidCount) + (hasManualEvidence ? 1 : 0);
+    const attemptedSourceCount = Math.max(
+      urls.length,
+      Number(normalizedEvidenceMeta.attemptedSourceCount) || 0,
+      validSourceCount,
+    );
+    const hasExternalEvidence = validSourceCount > 0;
 
     const content = await callDeepSeek({
       responseFormatJson: true,
@@ -1455,6 +1536,7 @@ URL：${doc.url}
 - 不允许出现 CNXXXX、CNYYYY、对比文件1标题、[具体结构/方法]、[参数/步骤] 等占位符。
 - 不允许把没有出现在证据中的专利号、标题、申请人、URL 写入 references。
 - 每个 noveltyPoints 与 featureComparison 必须引用待申请方案或证据中的真实技术特征。
+- riskScore 只表示“当前证据下的创新性风险”，不是授权概率；需综合最接近对比文件的特征覆盖程度、差异特征的技术效果和证据完整度。
 - 证据充足时输出有证据支撑的创新点；证据不足时也必须输出“待验证候选创新点”、初步结论、selfCheckRisks 和 claimSuggestions，并说明需要补充哪些检索材料。
 
 输出 JSON 字段：
@@ -1482,7 +1564,6 @@ ${evidenceText || "暂无外部网页证据；本次只能输出初步自评和�
       disclosureOutline?: Record<string, string | string[]>;
       selfCheckRisks?: string[];
     };
-    const evidenceStatus = hasExternalEvidence ? "evidence_based" : "preliminary_no_evidence";
     if (!hasExternalEvidence) {
       const preliminaryTerms = fallbackSearchBlocks(String(title || ""), String(inventionDisclosure || "")).slice(0, 5);
       const fallbackPoints = preliminaryTerms.length > 0
@@ -1501,17 +1582,14 @@ ${evidenceText || "暂无外部网页证据；本次只能输出初步自评和�
           .slice(0, 5)
           .map((point) => String(point).startsWith("候选") ? String(point) : `候选差异点：${point}（需补充对比文件正文证据确认）。`);
       }
-      if (!Array.isArray(parsed.featureComparison) || parsed.featureComparison.length === 0) {
-        parsed.featureComparison = parsed.noveltyPoints.slice(0, 5).map((point) => {
-          const feature = String(point).replace(/^候选差异点：/, "").split(/[，。；;]/)[0] || "待验证技术特征";
-          return {
-            feature,
-            evidence: "暂无对比文件正文证据；该项仅来自待申请技术方案或上传交底书抽取的词条。",
-            noveltyJudgement: "可作为待验证创新点进入撰写草稿，但不能作为正式新颖性/创造性结论。",
-          };
-        });
-      }
-      parsed.riskScore = Math.max(Number(parsed.riskScore) || 65, 65);
+      parsed.featureComparison = parsed.noveltyPoints.slice(0, 5).map((point) => {
+        const feature = String(point).replace(/^候选差异点：/, "").split(/[，。；;]/)[0] || "待验证技术特征";
+        return {
+          feature,
+          evidence: "暂无有效对比文件正文证据；该项仅来自待申请技术方案或上传交底书抽取的词条。",
+          noveltyJudgement: "可作为待验证创新点进入撰写草稿，但不能作为正式新颖性或创造性结论。",
+        };
+      });
       parsed.conclusion = `证据不足，以下结论为基于上传交底书/待申请技术方案和自动检索词条形成的初步判断，不构成正式新颖性或创造性结论。当前仍可进入撰写草稿阶段：建议先把候选差异点转化为权利要求的技术特征，同时继续补充 CNIPA、Google Patents、EPO、WIPO 的对比文件正文、摘要或权利要求摘录。${parsed.conclusion ? ` ${parsed.conclusion}` : ""}`;
       parsed.claimSuggestions = [
         "先运行 CNIPA 自动查新，或粘贴 3-5 篇最接近对比文件的摘要、权利要求或说明书摘录。",
@@ -1526,11 +1604,65 @@ ${evidenceText || "暂无外部网页证据；本次只能输出初步自评和�
       ];
     }
 
+    parsed.references = (Array.isArray(parsed.references) ? parsed.references : [])
+      .filter((reference) => referenceAppearsInEvidence(reference, evidenceText))
+      .slice(0, 5)
+      .map((reference) => ({
+        ...reference,
+        relevanceScore: clampScore(reference.relevanceScore, 0),
+      }));
+
+    const featureComparison = Array.isArray(parsed.featureComparison) ? parsed.featureComparison.slice(0, 6) : [];
+    parsed.featureComparison = featureComparison;
+    const supportedFeatureCount = hasExternalEvidence
+      ? featureComparison.filter(featureHasConcreteEvidence).length
+      : 0;
+    const featureCoverage = featureComparison.length
+      ? Math.round((supportedFeatureCount / featureComparison.length) * 100)
+      : 0;
+    const evidenceLevel = validSourceCount >= 3 ? "strong" : validSourceCount > 0 ? "limited" : "none";
+    const confidenceScore = evidenceLevel === "strong"
+      ? Math.min(90, 66 + validSourceCount * 4 + Math.round(featureCoverage / 10))
+      : evidenceLevel === "limited"
+        ? Math.min(64, 34 + validSourceCount * 10 + Math.round(featureCoverage / 10))
+        : attemptedSourceCount > 0 ? 18 : 10;
+    const rawRiskScore = clampScore(parsed.riskScore, 50);
+    const calibrationWeight = evidenceLevel === "strong"
+      ? Math.min(0.9, confidenceScore / 100)
+      : evidenceLevel === "limited"
+        ? Math.min(0.6, confidenceScore / 100)
+        : 0;
+    parsed.riskScore = Math.round(rawRiskScore * calibrationWeight + 50 * (1 - calibrationWeight));
+    const evidenceStatus = evidenceLevel === "strong"
+      ? "evidence_based"
+      : evidenceLevel === "limited"
+        ? "limited_evidence"
+        : "preliminary_no_evidence";
+    const evidenceProfile = {
+      level: evidenceLevel,
+      confidenceScore,
+      validSourceCount,
+      attemptedSourceCount,
+      featureCoverage,
+      basis: [
+        `已识别 ${validSourceCount} 个有效证据来源，尝试访问 ${attemptedSourceCount} 个来源。`,
+        `已完成 ${featureComparison.length} 项特征对比，其中 ${supportedFeatureCount} 项具有可用对比文本。`,
+        `风险原始判断 ${Math.round(rawRiskScore)}/100，经证据置信度校准为 ${parsed.riskScore}/100。`,
+      ],
+      limitations: [
+        ...(validSourceCount < 3 ? ["有效对比文件少于 3 份，检索覆盖仍然有限。"] : []),
+        ...(featureCoverage < 70 ? ["部分待保护特征缺少逐项公开内容映射。"] : []),
+        ...(attemptedSourceCount > validSourceCount ? ["部分公开页面受反爬、登录或动态渲染限制，未取得可用正文。"] : []),
+      ],
+      calibrationNote: "风险分表示当前证据下的技术重合风险，不是授权概率；证据越少，分数越向中性值校准。",
+    };
+
     res.json({
       title: title || "未命名中国专利请求",
       ...parsed,
       evidenceStatus,
-      crawlerEvidence,
+      evidenceProfile,
+      crawlerEvidence: usableCrawlerEvidence,
     });
   } catch (error) {
     res.status(500).json({

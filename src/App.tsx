@@ -73,14 +73,6 @@ const skills = [
   { name: "格式合规", desc: "编号、摘要、附图标记与导出检查", icon: ClipboardCheck },
 ];
 
-const references = [
-  { id: "CN116842931A", title: "一种多传感器数据融合方法", score: 86, hit: "采集、滤波、融合策略相近" },
-  { id: "CN114209778B", title: "低功耗边缘感知节点", score: 73, hit: "功耗调度逻辑部分重合" },
-  { id: "US20240112991A1", title: "Sensor fusion for embedded devices", score: 68, hit: "模型更新机制相似" },
-  { id: "EP4276132A1", title: "Adaptive sampling controller", score: 61, hit: "采样频率控制相近" },
-  { id: "CN113558240A", title: "一种工业设备状态监测系统", score: 54, hit: "应用场景接近" },
-];
-
 const workflowCards = [
   ["01", "上传交底书", "解析 .docx 标题、章节、技术方案，形成可检索输入。"],
   ["02", "抽取词条", "DeepSeek 生成候选查新词条，用户确认核心术语。"],
@@ -178,8 +170,19 @@ async function fetchApiJson(input: RequestInfo | URL, init?: RequestInit, timeou
 
 const defaultAssessment: NoveltyAssessment = {
   title: "多模态传感器的低功耗融合方法",
-  riskScore: 42,
-  conclusion: "中低风险，可进入权利要求设计。主要差异点集中在事件触发采样与融合权重联动更新的组合关系。",
+  evidenceStatus: "preliminary_no_evidence",
+  evidenceProfile: {
+    level: "none",
+    confidenceScore: 18,
+    validSourceCount: 0,
+    attemptedSourceCount: 0,
+    featureCoverage: 0,
+    basis: ["已从示例技术方案中提取候选差异特征。"],
+    limitations: ["尚未运行公开专利检索，不能形成正式创新性判断。"],
+    calibrationNote: "风险分表示当前证据下的技术重合风险，不是授权概率；无证据时按中性值显示。",
+  },
+  riskScore: 50,
+  conclusion: "当前为未检索的示例初稿。系统已提取事件触发采样与融合权重联动更新等候选差异点，但尚无公开对比文件正文，不能据此判断新颖性或创造性。",
   noveltyPoints: [
     "根据异常事件强度动态调整传感器采样频率，而非固定周期采样。",
     "融合权重由边缘节点本地更新，降低云端依赖和通信开销。",
@@ -188,22 +191,16 @@ const defaultAssessment: NoveltyAssessment = {
   featureComparison: [
     {
       feature: "事件触发采样",
-      evidence: "对比文件多公开固定周期采集或单阈值触发。",
-      noveltyJudgement: "可作为独权中的触发条件与采样频率调整关系。",
+      evidence: "暂无对比文件正文；该特征来自示例技术方案。",
+      noveltyJudgement: "可作为独权候选限定关系，需检索确认是否已被公开。",
     },
     {
       feature: "功耗预算约束融合权重",
-      evidence: "现有方案通常把功耗管理和融合模型分开描述。",
-      noveltyJudgement: "建议写成算法步骤之间的耦合关系。",
+      evidence: "暂无对比文件正文；该特征来自示例技术方案。",
+      noveltyJudgement: "建议先按步骤耦合关系描述，再用最接近对比文件逐项核验。",
     },
   ],
-  references: references.map((ref) => ({
-    publicationNumber: ref.id,
-    title: ref.title,
-    source: ref.id.startsWith("CN") ? "CNIPA" : ref.id.startsWith("US") ? "USPTO" : "EPO",
-    relevanceScore: ref.score,
-    keyDisclosure: ref.hit,
-  })),
+  references: [],
   claimSuggestions: [
     "独权聚焦“异常事件强度-采样频率调整系数-融合权重更新”的闭环。",
     "从权补充环境变化率、历史误报率、功耗预算阈值的计算方式。",
@@ -513,6 +510,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [searchEndDate, setSearchEndDate] = useState("");
   const [patentUrls, setPatentUrls] = useState("");
   const [manualEvidence, setManualEvidence] = useState("");
+  const [automatedEvidence, setAutomatedEvidence] = useState("");
   const [isAssessing, setIsAssessing] = useState(false);
   const [isImportingDisclosure, setIsImportingDisclosure] = useState(false);
   const [isGeneratingBlocks, setIsGeneratingBlocks] = useState(false);
@@ -528,7 +526,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     { label: "Word 输入", value: importedDisclosure ? "已解析" : searchText ? "可用" : "待输入", tone: importedDisclosure || searchText ? "ok" : "warn" },
     { label: "候选词条", value: `${selectedTerms.length || searchBlocks.length || 0} 个`, tone: selectedTerms.length || searchBlocks.length ? "ok" : "warn" },
     { label: "公开抓取", value: cnipaResult ? `${cnipaResult.publicSources?.length || 0} 入口` : "待运行", tone: cnipaResult ? "ok" : "warn" },
-    { label: "证据材料", value: manualEvidence.trim() ? "已合并" : "自动生成", tone: manualEvidence.trim() ? "ok" : "warn" },
+    { label: "证据材料", value: manualEvidence.trim() || automatedEvidence.trim() ? "已合并" : "自动生成", tone: manualEvidence.trim() || automatedEvidence.trim() ? "ok" : "warn" },
   ];
 
   async function handleDisclosureFileUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -560,6 +558,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
       setTermCandidates([]);
       setSelectedTerms([]);
       setCnipaResult(null);
+      setAutomatedEvidence("");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -645,7 +644,7 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
       }
       setCnipaResult(data);
       if (data.evidenceText) {
-        setManualEvidence((current) => [current, data.evidenceText].filter(Boolean).join("\n\n"));
+        setAutomatedEvidence(data.evidenceText);
       }
       const urls = Array.isArray(data.hits)
         ? data.hits.map((hit: { link?: string }) => hit.link).filter(Boolean)
@@ -690,11 +689,49 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
       .split(/\r?\n/)
       .map((url) => url.trim())
       .filter(Boolean);
-    const hasEvidence = manualEvidence.trim().length >= 20 || patentUrls.split(/\r?\n/).some((url) => url.trim());
-    if (hasEvidence) return { evidence: manualEvidence, urls: currentUrls };
+    const buildEvidenceMeta = (result: CnipaSearchResult | null) => {
+      const publicDocuments = result?.publicDocuments || [];
+      const usablePublicDocuments = publicDocuments.filter((doc) =>
+        String(doc.excerpt || "").trim().length >= 120 && !/抓取失败|无法抓取|Fetch [45]/i.test(`${doc.title} ${doc.excerpt}`),
+      );
+      return {
+        cnipaHitCount: result?.hits?.length || 0,
+        publicDocumentCount: usablePublicDocuments.length,
+        attemptedSourceCount: (result?.publicSources?.length || 0) + publicDocuments.length,
+      };
+    };
+    const mergeResultUrls = (result: CnipaSearchResult | null) => Array.from(new Set([
+      ...currentUrls,
+      ...(result?.hits || []).map((hit) => hit.link).filter((url): url is string => Boolean(url)),
+      ...(result?.publicDocuments || []).map((doc) => doc.url).filter(Boolean),
+    ]));
+
+    if (cnipaResult) {
+      return {
+        manualEvidence,
+        automatedEvidence,
+        urls: mergeResultUrls(cnipaResult),
+        evidenceMeta: buildEvidenceMeta(cnipaResult),
+      };
+    }
+    if (currentUrls.length > 0) {
+      return {
+        manualEvidence,
+        automatedEvidence: "",
+        urls: currentUrls,
+        evidenceMeta: { cnipaHitCount: 0, publicDocumentCount: 0, attemptedSourceCount: currentUrls.length },
+      };
+    }
 
     const blocks = await resolveSearchTerms();
-    if (blocks.length === 0) return { evidence: manualEvidence, urls: currentUrls };
+    if (blocks.length === 0) {
+      return {
+        manualEvidence,
+        automatedEvidence: "",
+        urls: currentUrls,
+        evidenceMeta: { cnipaHitCount: 0, publicDocumentCount: 0, attemptedSourceCount: 0 },
+      };
+    }
 
     const { response, data } = await fetchApiJson("/api/patent/public-patent-search", {
       method: "POST",
@@ -707,8 +744,8 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     if (!response.ok) throw new Error(data?.hint || data?.error || "多源公开抓取失败");
 
     setCnipaResult(data);
-    const nextEvidence = [manualEvidence, data.evidenceText].filter(Boolean).join("\n\n");
-    if (data.evidenceText) setManualEvidence(nextEvidence);
+    const nextAutomatedEvidence = String(data.evidenceText || "");
+    if (nextAutomatedEvidence) setAutomatedEvidence(nextAutomatedEvidence);
     const urlsFromHits = Array.isArray(data.hits)
       ? data.hits.map((hit: { link?: string }) => hit.link).filter(Boolean)
       : [];
@@ -719,7 +756,12 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
     if (urls.length > 0) {
       setPatentUrls(urls.join("\n"));
     }
-    return { evidence: nextEvidence, urls };
+    return {
+      manualEvidence,
+      automatedEvidence: nextAutomatedEvidence,
+      urls,
+      evidenceMeta: buildEvidenceMeta(data),
+    };
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -742,7 +784,9 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           inventionDisclosure: searchText,
           dateRange: formatDateRange(searchStartDate, searchEndDate),
           patentUrls: evidenceForAssessment.urls,
-          manualEvidence: evidenceForAssessment.evidence,
+          manualEvidence: evidenceForAssessment.manualEvidence,
+          automatedEvidence: evidenceForAssessment.automatedEvidence,
+          evidenceMeta: evidenceForAssessment.evidenceMeta,
         }),
       }, GENERATION_API_TIMEOUT_MS);
       if (!response.ok) {
@@ -961,17 +1005,38 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
   const [reportError, setReportError] = useState("");
   const [isExportingReport, setIsExportingReport] = useState(false);
   const score = Math.max(0, Math.min(100, Number(assessment.riskScore) || 0));
+  const fallbackSourceCount = assessment.references.length + assessment.crawlerEvidence.length;
+  const profile = assessment.evidenceProfile || {
+    level: assessment.evidenceStatus === "evidence_based" ? "strong" as const : assessment.evidenceStatus === "limited_evidence" ? "limited" as const : "none" as const,
+    confidenceScore: assessment.evidenceStatus === "evidence_based" ? 72 : assessment.evidenceStatus === "limited_evidence" ? 48 : 18,
+    validSourceCount: fallbackSourceCount,
+    attemptedSourceCount: fallbackSourceCount,
+    featureCoverage: fallbackSourceCount ? 50 : 0,
+    basis: ["当前结果来自技术方案、检索词条与已取得的公开文本。"],
+    limitations: fallbackSourceCount ? ["仍建议补充最接近对比文件并由代理师复核。"] : ["尚未取得可用对比文件正文。"],
+    calibrationNote: "风险分表示当前证据下的技术重合风险，不是授权概率。",
+  };
   const riskTone = score >= 70 ? "danger" : score >= 45 ? "warn" : "ok";
-  const riskLabel = score >= 70 ? "高风险" : score >= 45 ? "中风险" : "风险可控";
-  const riskTitle = score >= 70 ? "创新性风险较高，需重构差异特征" : score >= 45 ? "中等风险，需补强技术效果" : "风险可控，可进入撰写";
+  const isEvidenceBased = profile.level !== "none";
+  const isStrongEvidence = profile.level === "strong";
+  const confidenceLabel = isStrongEvidence ? "较高可信" : profile.level === "limited" ? "有限可信" : "待证据验证";
+  const riskLabel = !isEvidenceBased ? "暂不能定级" : score >= 70 ? "高风险" : score >= 45 ? "中风险" : "风险较低";
+  const riskTitle = !isEvidenceBased
+    ? "已形成候选差异点，创新性结论仍待公开证据验证"
+    : score >= 70
+      ? "现有证据显示技术重合较高，建议重构独权核心特征"
+      : score >= 45
+        ? "存在部分技术重合，需补强差异关系与技术效果"
+        : "现有证据下重合风险较低，可进入权利要求设计";
   const nextStep =
-    score >= 70
+    !isEvidenceBased
+      ? "先补充 3-5 份最接近对比文件正文，再确认哪些差异特征适合进入独立权利要求。"
+      : score >= 70
       ? "建议先补充检索、收窄独权核心特征，并寻找可验证的结构或步骤差异。"
       : score >= 45
         ? "建议把差异特征写成步骤间的耦合关系，同时补足参数范围、触发条件和技术效果。"
         : "可进入权利要求设计，优先把已验证差异写入独权，再用从权覆盖变形方案。";
-  const sourceCount = assessment.references.length + assessment.crawlerEvidence.length;
-  const isEvidenceBased = assessment.evidenceStatus !== "preliminary_no_evidence" && sourceCount > 0;
+  const sourceCount = profile.validSourceCount;
 
   async function handleDownloadReport() {
     setIsExportingReport(true);
@@ -998,45 +1063,72 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
 
   return (
     <div className="result-layout">
-      <section className="score-card">
-        <span className="eyebrow">Novelty Risk</span>
-        <div className="score-ring" style={{ "--score": `${score}%` } as CSSProperties}>
-          {score}
-        </div>
-        <Badge tone={isEvidenceBased ? riskTone : "warn"}>{isEvidenceBased ? riskLabel : "证据不足"}</Badge>
-        <h2>{isEvidenceBased ? riskTitle : "初步自评，不能作为创新性结论"}</h2>
-        <p>{assessment.conclusion}</p>
-        {!isEvidenceBased && (
-          <div className="form-error">
-            当前没有可用的对比文件正文证据。系统会优先用词条自动跑 CNIPA、Google Patents、EPO、WIPO 多源公开抓取；若公开页面仍抓不到正文，请补充对比文件链接、摘要或权利要求摘录。
+      <section className={`result-verdict ${riskTone} wide`}>
+        <div className="verdict-score">
+          <span className="eyebrow">创新性风险指数</span>
+          <div className="score-ring" style={{ "--score": `${score}%` } as CSSProperties}>
+            <strong>{score}</strong>
+            <small>/ 100</small>
           </div>
-        )}
-        <div className="score-detail">
-          <strong>下一步处理建议</strong>
-          <span>{nextStep}</span>
+          <Badge tone={isEvidenceBased ? riskTone : "warn"}>{riskLabel}</Badge>
         </div>
-        <div className="score-stats">
-          <span><strong>{assessment.noveltyPoints.length}</strong>创新点</span>
-          <span><strong>{assessment.featureComparison.length}</strong>特征对比</span>
-          <span><strong>{sourceCount}</strong>证据来源</span>
+        <div className="verdict-copy">
+          <div className="verdict-kicker">
+            <BadgeCheck size={17} />
+            <span>证据校准结论 · {confidenceLabel}</span>
+          </div>
+          <h2>{riskTitle}</h2>
+          <p>{assessment.conclusion}</p>
+          <div className="verdict-facts">
+            <span><strong>{sourceCount}</strong> 有效证据</span>
+            <span><strong>{assessment.featureComparison.length}</strong> 特征比对</span>
+            <span><strong>{profile.featureCoverage}%</strong> 证据覆盖</span>
+          </div>
         </div>
-        <div className="evidence-summary">
-          <span>证据状态</span>
-          <strong>{isEvidenceBased ? "可用于撰写策略" : "仅作待验证初稿"}</strong>
-          <p>{isEvidenceBased ? "已合并公开对比文件或网页抓取材料，仍建议代理师复核。" : "当前结论主要来自上传技术方案和检索词条，需要继续补充公开文本证据。"}</p>
+        <div className="verdict-actions">
+          <div className="score-detail">
+            <strong>下一步处理建议</strong>
+            <span>{nextStep}</span>
+          </div>
+          <button className="primary-button" onClick={() => onJump("draft")}>
+            {isEvidenceBased ? "进入智能撰写" : "基于候选点撰写草稿"} <ArrowRight size={16} />
+          </button>
+          <button className="ghost-button" disabled={isExportingReport} onClick={handleDownloadReport}>
+            <Download size={16} /> {isExportingReport ? "正在生成..." : "下载 Word 查新报告"}
+          </button>
+          {reportError && <div className="form-error">{reportError}</div>}
         </div>
-        <button className="primary-button" onClick={() => onJump("draft")}>
-          {isEvidenceBased ? "进入智能撰写" : "基于初步结论撰写"} <ArrowRight size={16} />
-        </button>
-        <button className="ghost-button" disabled={isExportingReport} onClick={handleDownloadReport}>
-          <Download size={16} /> {isExportingReport ? "正在生成..." : "下载 Word 查新报告"}
-        </button>
-        {reportError && <div className="form-error">{reportError}</div>}
+      </section>
+
+      <section className="content-card assessment-basis-card">
+        <div className="section-title">
+          <h3>评估依据与可信度</h3>
+          <Badge tone={isStrongEvidence ? "ok" : "warn"}>{confidenceLabel}</Badge>
+        </div>
+        <div className="confidence-row">
+          <div>
+            <strong>{profile.confidenceScore}</strong>
+            <span>结论可信度</span>
+          </div>
+          <div className="confidence-track" aria-label={`结论可信度 ${profile.confidenceScore}%`}>
+            <i style={{ width: `${profile.confidenceScore}%` }} />
+          </div>
+        </div>
+        <div className="basis-metrics">
+          <span><strong>{profile.validSourceCount}</strong>有效来源</span>
+          <span><strong>{profile.attemptedSourceCount}</strong>尝试来源</span>
+          <span><strong>{profile.featureCoverage}%</strong>特征覆盖</span>
+        </div>
+        <div className="basis-list">
+          {profile.basis.map((item) => <p key={item}><CheckCircle2 size={15} />{item}</p>)}
+          {profile.limitations.map((item) => <p className="limitation" key={item}><AlertTriangle size={15} />{item}</p>)}
+        </div>
+        <small className="calibration-note">{profile.calibrationNote}</small>
       </section>
 
       <section className="content-card">
         <div className="section-title">
-          <h3>{isEvidenceBased ? "有证据支撑的创新点" : "待验证候选创新点"}</h3>
+          <h3>{isStrongEvidence ? "当前证据支持的候选创新点" : "待验证候选创新点"}</h3>
           <Badge tone={riskTone}>{assessment.noveltyPoints.length} 项</Badge>
         </div>
         {assessment.noveltyPoints.length > 0 ? (

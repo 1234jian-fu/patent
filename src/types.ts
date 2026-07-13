@@ -34,9 +34,21 @@ export interface PatentReference {
   url?: string;
 }
 
+export interface EvidenceProfile {
+  level: "strong" | "limited" | "none";
+  confidenceScore: number;
+  validSourceCount: number;
+  attemptedSourceCount: number;
+  featureCoverage: number;
+  basis: string[];
+  limitations: string[];
+  calibrationNote: string;
+}
+
 export interface NoveltyAssessment {
   title?: string;
-  evidenceStatus?: "evidence_based" | "preliminary_no_evidence";
+  evidenceStatus?: "evidence_based" | "limited_evidence" | "preliminary_no_evidence";
+  evidenceProfile?: EvidenceProfile;
   riskScore: number;
   conclusion: string;
   noveltyPoints: string[];
