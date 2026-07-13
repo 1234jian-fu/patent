@@ -81,6 +81,13 @@ const references = [
   { id: "CN113558240A", title: "一种工业设备状态监测系统", score: 54, hit: "应用场景接近" },
 ];
 
+const workflowCards = [
+  ["01", "上传交底书", "解析 .docx 标题、章节、技术方案，形成可检索输入。"],
+  ["02", "抽取词条", "DeepSeek 生成候选查新词条，用户确认核心术语。"],
+  ["03", "公开抓取", "快速访问 CNIPA、Google Patents、EPO、WIPO 公开入口和详情页。"],
+  ["04", "评估撰写", "输出创新性结论、权利要求建议、交底书草稿和 Word 报告。"],
+];
+
 const DEFAULT_API_TIMEOUT_MS = 180_000;
 const SEARCH_API_TIMEOUT_MS = 240_000;
 const GENERATION_API_TIMEOUT_MS = 300_000;
@@ -364,6 +371,9 @@ export default function App() {
             <h1>{activeTitle}</h1>
           </div>
           <div className="top-actions">
+            <span className="runtime-pill">
+              {window.location.origin === HF_SPACE_ORIGIN ? "HF Space 在线" : "本地预览 · API 指向 HF"}
+            </span>
             <button className="ghost-button" onClick={() => setActiveTab("draft")}>模板库</button>
             <button className="primary-button" onClick={() => setActiveTab("search")}>
               新建查新 <ArrowRight size={16} />
@@ -413,6 +423,22 @@ function Dashboard({ onJump }: { onJump: (tab: AppTab) => void }) {
         <Metric label="进行中项目" value="12" note="3 个待导师复核" />
         <Metric label="本周查新" value="28" note="平均风险分 41" />
         <Metric label="格式问题" value="17" note="附图标记占 52%" />
+      </section>
+
+      <section className="content-card wide">
+        <div className="section-title">
+          <h3>实际处理链路</h3>
+          <Badge tone="ok">Word 输入 · 词条主导 · 证据留痕</Badge>
+        </div>
+        <div className="workflow-card-grid">
+          {workflowCards.map(([index, title, text]) => (
+            <div className="workflow-card" key={title}>
+              <span>{index}</span>
+              <strong>{title}</strong>
+              <p>{text}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="content-card">
@@ -498,6 +524,12 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
   const [importedDisclosure, setImportedDisclosure] = useState<ImportedDisclosureSummary | null>(null);
   const [error, setError] = useState("");
   const searchText = inventionDisclosure.trim() || title.trim();
+  const searchStageItems = [
+    { label: "Word 输入", value: importedDisclosure ? "已解析" : searchText ? "可用" : "待输入", tone: importedDisclosure || searchText ? "ok" : "warn" },
+    { label: "候选词条", value: `${selectedTerms.length || searchBlocks.length || 0} 个`, tone: selectedTerms.length || searchBlocks.length ? "ok" : "warn" },
+    { label: "公开抓取", value: cnipaResult ? `${cnipaResult.publicSources?.length || 0} 入口` : "待运行", tone: cnipaResult ? "ok" : "warn" },
+    { label: "证据材料", value: manualEvidence.trim() ? "已合并" : "自动生成", tone: manualEvidence.trim() ? "ok" : "warn" },
+  ];
 
   async function handleDisclosureFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -749,6 +781,15 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
           ))}
         </div>
 
+        <div className="search-status-strip">
+          {searchStageItems.map((item) => (
+            <div className="search-status-item" key={item.label}>
+              <span>{item.label}</span>
+              <Badge tone={item.tone as "ok" | "warn"}>{item.value}</Badge>
+            </div>
+          ))}
+        </div>
+
         <div className="upload-zone">
           <UploadCloud size={42} />
           <strong>Word 辅助生成词条，词条主导多源查新</strong>
@@ -818,14 +859,18 @@ function NoveltySearch({ onAssessment }: { onAssessment: (assessment: NoveltyAss
                 {isGeneratingBlocks ? "提取中..." : "提取候选词条"}
               </button>
               <button className="ghost-button" disabled={isSearchingCnipa || (termCandidates.length > 0 && selectedTerms.length === 0)} onClick={runCnipaSearch} type="button">
-                {isSearchingCnipa ? "抓取中..." : `用 ${selectedTerms.length || searchBlocks.length || 0} 个词条多源抓取`}
+                {isSearchingCnipa ? "抓取中..." : `用前 ${Math.min(selectedTerms.length || searchBlocks.length || 0, 5)} 个词条多源抓取`}
               </button>
+            </div>
+            <div className="quick-mode-note">
+              <strong>快速模式</strong>
+              <span>为保证 HF 免费 CPU 稳定返回，CNIPA 脚本优先尝试前 2 个核心词条；Google Patents/EPO/WIPO 会继续使用前 4-5 个词条抓取公开入口和详情页。</span>
             </div>
             {termCandidates.length > 0 && (
               <div className="term-candidate-panel">
                 <div className="term-candidate-head">
                   <strong>候选查新词条</strong>
-                  <span>最多选择 8 个；词条均来自上传题目或正文</span>
+                  <span>最多选择 8 个；快速抓取优先使用前 5 个</span>
                 </div>
                 <div className="term-candidate-grid">
                   {termCandidates.map((item) => {
@@ -974,6 +1019,11 @@ function SearchResult({ assessment, onJump }: { assessment: NoveltyAssessment; o
           <span><strong>{assessment.noveltyPoints.length}</strong>创新点</span>
           <span><strong>{assessment.featureComparison.length}</strong>特征对比</span>
           <span><strong>{sourceCount}</strong>证据来源</span>
+        </div>
+        <div className="evidence-summary">
+          <span>证据状态</span>
+          <strong>{isEvidenceBased ? "可用于撰写策略" : "仅作待验证初稿"}</strong>
+          <p>{isEvidenceBased ? "已合并公开对比文件或网页抓取材料，仍建议代理师复核。" : "当前结论主要来自上传技术方案和检索词条，需要继续补充公开文本证据。"}</p>
         </div>
         <button className="primary-button" onClick={() => onJump("draft")}>
           {isEvidenceBased ? "进入智能撰写" : "基于初步结论撰写"} <ArrowRight size={16} />
@@ -1429,6 +1479,12 @@ function DraftWorkbench({
           <span>{activeDraft.title} · 当前章节：{currentSection.label}</span>
         </div>
         {error && <div className="editor-error">{error}</div>}
+        <div className="draft-health-strip">
+          <span>证据来源：{assessment.references.length + assessment.crawlerEvidence.length}</span>
+          <span>候选创新点：{assessment.noveltyPoints.length}</span>
+          <span>权利要求建议：{assessment.claimSuggestions.length}</span>
+          <span>格式问题：{activeDraft.formatIssues?.length || 0}</span>
+        </div>
         <div className="draft-transform-strip">
           {transformSteps.map(([label, text], index) => (
             <div className="draft-transform-step" key={label}>
